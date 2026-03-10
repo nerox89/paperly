@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Inbox — paperly{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+
+  <!-- Progress bar -->
+  <div class="mb-6">
+    <div class="flex justify-between text-sm text-gray-600 mb-1">
+      <span>Inbox: <strong>{{ total }}</strong> Dokumente</span>
+      <span>Gesamt: {{ total_docs }} | Verarbeitet: {{ processed }}</span>
+    </div>
+    {% set pct = ((processed / total_docs) * 100) | round(1) if total_docs > 0 else 0 %}
+    <div class="w-full bg-gray-200 rounded-full h-2.5">
+      <div class="bg-blue-600 h-2.5 rounded-full transition-all"
+           style="width: {{ pct }}%"></div>
+    </div>
+    <p class="text-xs text-gray-400 mt-1">{{ pct }}% verarbeitet</p>
+  </div>
+
+  <!-- Document list -->
+  {% if docs %}
+  <div class="space-y-2">
+    {% for doc in docs %}
+    <a href="/document/{{ doc.id }}"
+       class="flex items-center gap-4 bg-white rounded-lg border border-gray-200 px-4 py-3
+              hover:border-blue-400 hover:shadow-sm transition-all group">
+
+      <!-- Thumbnail -->
+      <div class="w-12 h-16 flex-shrink-0 bg-gray-100 rounded overflow-hidden">
+        <img src="/proxy/thumb/{{ doc.id }}" alt=""
+             class="w-full h-full object-cover"
+             onerror="this.style.display='none'">
+      </div>
+
+      <!-- Info -->
+      <div class="flex-1 min-w-0">
+        <p class="font-medium text-gray-900 truncate group-hover:text-blue-700">
+          {{ doc.title or '(kein Titel)' }}
+        </p>
+        <p class="text-xs text-gray-400 mt-0.5">
+          {{ doc.created[:10] if doc.created else '' }}
+          {% if doc.correspondent %}
+            · {{ taxonomy.correspondent_by_id(doc.correspondent).name if taxonomy.correspondent_by_id(doc.correspondent) else doc.correspondent }}
+          {% endif %}
+          {% if doc.document_type %}
+            · {{ taxonomy.document_type_by_id(doc.document_type).name if taxonomy.document_type_by_id(doc.document_type) else '' }}
+          {% endif %}
+        </p>
+      </div>
+
+      <svg class="w-4 h-4 text-gray-300 group-hover:text-blue-400 flex-shrink-0" fill="none"
+           viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+      </svg>
+    </a>
+    {% endfor %}
+  </div>
+
+  <!-- Pagination -->
+  {% if total > page_size %}
+  <div class="flex justify-center gap-3 mt-6">
+    {% if page > 1 %}
+    <a href="/?page={{ page - 1 }}" class="px-3 py-1 text-sm border rounded hover:bg-gray-100">← Zurück</a>
+    {% endif %}
+    <span class="px-3 py-1 text-sm text-gray-500">Seite {{ page }}</span>
+    {% if page * page_size < total %}
+    <a href="/?page={{ page + 1 }}" class="px-3 py-1 text-sm border rounded hover:bg-gray-100">Weiter →</a>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="text-center py-16 text-gray-500">
+    <p class="text-4xl mb-3">🎉</p>
+    <p class="text-lg font-medium">Inbox ist leer!</p>
+    <p class="text-sm mt-1">Alle Dokumente wurden verarbeitet.</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Replace stats badge content with readable text
+document.body.addEventListener("htmx:afterSwap", function(e) {
+  if (e.detail.target.id === "stats-badge") {
+    try {
+      const d = JSON.parse(e.detail.xhr.responseText);
+      e.detail.target.textContent = `📥 ${d.documents_inbox} in Inbox`;
+    } catch {}
+  }
+});
+</script>
+{% endblock %}

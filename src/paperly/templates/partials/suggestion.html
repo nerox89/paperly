@@ -1,0 +1,136 @@
+<!-- AI Suggestion form — rendered inline or as HTMX partial -->
+
+{% set conf_color = "text-green-600" if suggestion.confidence >= 0.8 else ("text-yellow-600" if suggestion.confidence >= 0.5 else "text-red-500") %}
+
+<div>
+  <!-- Confidence badge -->
+  <div class="flex items-center gap-2 mb-4">
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full
+      {% if suggestion.confidence >= 0.8 %}bg-green-100 text-green-700
+      {% elif suggestion.confidence >= 0.5 %}bg-yellow-100 text-yellow-700
+      {% else %}bg-red-100 text-red-600{% endif %}">
+      {{ (suggestion.confidence * 100) | round }}% Konfidenz
+    </span>
+    {% if suggestion.reasoning %}
+    <span class="text-xs text-gray-400 truncate" title="{{ suggestion.reasoning }}">
+      {{ suggestion.reasoning[:80] }}{% if suggestion.reasoning|length > 80 %}…{% endif %}
+    </span>
+    {% endif %}
+  </div>
+
+  <form method="post" action="/document/{{ doc.id }}/apply" id="apply-form">
+
+    <!-- Title -->
+    <div class="mb-4">
+      <label class="block text-xs font-medium text-gray-600 mb-1">Titel</label>
+      <input type="text" name="title" required
+             value="{{ suggestion.title or doc.title }}"
+             class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+    </div>
+
+    <!-- Correspondent -->
+    <div class="mb-4">
+      <label class="block text-xs font-medium text-gray-600 mb-1">Absender / Korrespondent</label>
+      <select name="correspondent_id"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm
+                     focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onchange="toggleNewCorrespondent(this)">
+        <option value="">(keiner)</option>
+        <option value="__new__">+ Neuen Korrespondenten anlegen…</option>
+        {% for c in taxonomy.correspondents | sort(attribute='name') %}
+        <option value="{{ c.id }}"
+          {% if suggestion.correspondent_id == c.id %}selected{% endif %}>
+          {{ c.name }}
+        </option>
+        {% endfor %}
+      </select>
+      <!-- New correspondent input (hidden by default) -->
+      <input type="text" name="correspondent_new" id="new-corr-input"
+             placeholder="Name des neuen Korrespondenten"
+             value="{{ suggestion.correspondent_name if not suggestion.correspondent_id else '' }}"
+             class="mt-2 w-full border border-gray-300 rounded-md px-3 py-2 text-sm
+                    focus:outline-none focus:ring-2 focus:ring-blue-500
+                    {% if not suggestion.correspondent_id and suggestion.correspondent_name %}block{% else %}hidden{% endif %}">
+    </div>
+
+    <!-- Document type -->
+    <div class="mb-4">
+      <label class="block text-xs font-medium text-gray-600 mb-1">Dokumenttyp</label>
+      <select name="document_type_id"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm
+                     focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="">(keiner)</option>
+        {% for dt in taxonomy.document_types | sort(attribute='name') %}
+        <option value="{{ dt.id }}"
+          {% if suggestion.document_type_id == dt.id %}selected{% elif doc.document_type == dt.id and not suggestion.document_type_id %}selected{% endif %}>
+          {{ dt.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Tags -->
+    <div class="mb-6">
+      <label class="block text-xs font-medium text-gray-600 mb-2">Tags</label>
+      <div class="flex flex-wrap gap-2">
+        {% for tag in taxonomy.tags | sort(attribute='name') %}
+          {% if tag.id != taxonomy.inbox_tag_id %}
+          <label class="inline-flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" name="tag_ids" value="{{ tag.id }}"
+                   {% if tag.id in suggestion.tag_ids %}checked{% elif tag.id in doc.tags and tag.id != taxonomy.inbox_tag_id and not suggestion.tag_ids %}checked{% endif %}
+                   class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+            <span class="text-sm text-gray-700">{{ tag.name }}</span>
+          </label>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="flex gap-3 pt-2 border-t border-gray-100">
+      <button type="submit"
+              class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium
+                     px-4 py-2.5 rounded-md transition-colors">
+        ✓ Übernehmen
+      </button>
+      <form method="post" action="/document/{{ doc.id }}/skip" class="contents">
+        <button type="submit" id="skip-btn"
+                class="px-4 py-2.5 text-sm text-gray-600 border border-gray-300
+                       rounded-md hover:bg-gray-50 transition-colors">
+          Überspringen
+        </button>
+      </form>
+    </div>
+
+  </form>
+
+  <!-- OCR text preview (collapsible) -->
+  <details class="mt-4 text-xs text-gray-400">
+    <summary class="cursor-pointer hover:text-gray-600 select-none">OCR-Text anzeigen</summary>
+    <pre class="mt-2 p-3 bg-gray-50 rounded text-xs whitespace-pre-wrap break-words max-h-48 overflow-y-auto border">{{ suggestion.raw_content_preview or doc.content[:400] }}</pre>
+  </details>
+
+</div>
+
+<script>
+function toggleNewCorrespondent(sel) {
+  const input = document.getElementById("new-corr-input");
+  if (sel.value === "__new__") {
+    sel.value = "";
+    input.classList.remove("hidden");
+    input.focus();
+  } else {
+    input.classList.add("hidden");
+    input.value = "";
+  }
+}
+// Pre-show new correspondent input if suggestion has a new name
+(function() {
+  const sel = document.querySelector('[name="correspondent_id"]');
+  const input = document.getElementById("new-corr-input");
+  if (input && input.value && !sel.value) {
+    input.classList.remove("hidden");
+  }
+})();
+</script>

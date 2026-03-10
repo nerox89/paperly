@@ -1,0 +1,12 @@
+# Local development only — server uses standalone docker run
+services:
+  paperly:
+    build: .
+    ports:
+      - "8002:8002"
+    environment:
+      - PAPERLESS_URL=${PAPERLESS_URL:-http://localhost:18000}
+      - PAPERLESS_TOKEN=${PAPERLESS_TOKEN}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    env_file:
+      - .env
