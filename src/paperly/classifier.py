@@ -86,6 +86,12 @@ class Classifier:
                 messages=[{"role": "user", "content": user_message}],
             )
             raw = response.content[0].text.strip()
+            # Strip markdown code fences if Claude wraps the JSON
+            if raw.startswith("```"):
+                raw = raw.split("```", 2)[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.rstrip("`").strip()
             data = json.loads(raw)
         except json.JSONDecodeError as e:
             logger.warning("Claude returned invalid JSON: %s", e)
