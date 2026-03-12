@@ -55,10 +55,11 @@ async def lifespan(app: FastAPI):
     state.taxonomy = await state.paperless.get_taxonomy()
 
     logger.info(
-        "Loaded taxonomy: %d tags, %d correspondents, %d document types, inbox_tag=%s",
+        "Loaded taxonomy: %d tags, %d correspondents, %d document types, %d storage paths, inbox_tag=%s",
         len(state.taxonomy.tags),
         len(state.taxonomy.correspondents),
         len(state.taxonomy.document_types),
+        len(state.taxonomy.storage_paths),
         state.taxonomy.inbox_tag_id,
     )
     yield
@@ -145,23 +146,43 @@ async def apply_document(
     correspondent_id: Annotated[str, Form()] = "",
     correspondent_new: Annotated[str, Form()] = "",
     document_type_id: Annotated[str, Form()] = "",
+    document_type_new: Annotated[str, Form()] = "",
+    storage_path_id: Annotated[str, Form()] = "",
     tag_ids: Annotated[list[str], Form()] = [],
+    tag_new: Annotated[str, Form()] = "",
 ):
     """Apply chosen metadata and remove INBOX tag."""
-    # Resolve correspondent — create new if needed
+    # Resolve correspondent
     corr_id: int | None = None
     if correspondent_id:
         corr_id = int(correspondent_id)
     elif correspondent_new.strip():
         new_corr = await state.paperless.create_correspondent(correspondent_new.strip())
         corr_id = new_corr.id
-        # Refresh taxonomy cache
         state.taxonomy = await state.paperless.get_taxonomy()
 
-    doc_type_id = int(document_type_id) if document_type_id else None
+    # Resolve document type
+    dt_id: int | None = None
+    if document_type_id:
+        dt_id = int(document_type_id)
+    elif document_type_new.strip():
+        new_dt = await state.paperless.create_document_type(document_type_new.strip())
+        dt_id = new_dt.id
+        state.taxonomy = await state.paperless.get_taxonomy()
 
-    # Compute new tag list: chosen tags minus INBOX tag
+    # Resolve storage path
+    sp_id: int | None = None
+    if storage_path_id:
+        sp_id = int(storage_path_id)
+
+    # Resolve tags — create new tag if provided
     chosen_tags = [int(t) for t in tag_ids if t]
+    if tag_new.strip():
+        new_tag = await state.paperless.create_tag(tag_new.strip())
+        chosen_tags.append(new_tag.id)
+        state.taxonomy = await state.paperless.get_taxonomy()
+
+    # Remove INBOX tag
     if state.taxonomy.inbox_tag_id in chosen_tags:
         chosen_tags.remove(state.taxonomy.inbox_tag_id)
 
@@ -169,14 +190,12 @@ async def apply_document(
         doc_id,
         title=title,
         correspondent=corr_id,
-        document_type=doc_type_id,
+        document_type=dt_id,
+        storage_path=sp_id,
         tags=chosen_tags,
     )
 
-    # Invalidate suggestion cache for this doc
     state.suggestion_cache.pop(doc_id, None)
-
-    # Redirect back to inbox list
     return RedirectResponse("/", status_code=303)
 
 

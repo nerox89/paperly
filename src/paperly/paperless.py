@@ -36,8 +36,16 @@ class Document:
     correspondent: int | None
     document_type: int | None
     tags: list[int]
+    storage_path: int | None
     archive_serial_number: int | None
     original_file_name: str | None
+
+
+@dataclass
+class StoragePath:
+    id: int
+    name: str
+    document_count: int = 0
 
 
 @dataclass
@@ -45,6 +53,7 @@ class Taxonomy:
     tags: list[Tag] = field(default_factory=list)
     correspondents: list[Correspondent] = field(default_factory=list)
     document_types: list[DocumentType] = field(default_factory=list)
+    storage_paths: list[StoragePath] = field(default_factory=list)
     inbox_tag_id: int | None = None
 
     def tag_by_id(self, id: int) -> Tag | None:
@@ -55,6 +64,9 @@ class Taxonomy:
 
     def document_type_by_id(self, id: int) -> DocumentType | None:
         return next((dt for dt in self.document_types if dt.id == id), None)
+
+    def storage_path_by_id(self, id: int) -> StoragePath | None:
+        return next((sp for sp in self.storage_paths if sp.id == id), None)
 
 
 class PaperlessClient:
@@ -77,10 +89,11 @@ class PaperlessClient:
 
     async def get_taxonomy(self) -> Taxonomy:
         async with self._client() as c:
-            tags_r, corr_r, dt_r = await _gather(
+            tags_r, corr_r, dt_r, sp_r = await _gather(
                 c.get("/api/tags/?page_size=500"),
                 c.get("/api/correspondents/?page_size=500"),
                 c.get("/api/document_types/?page_size=500"),
+                c.get("/api/storage_paths/?page_size=500"),
             )
 
         tags = [
@@ -95,8 +108,11 @@ class PaperlessClient:
             DocumentType(id=dt["id"], name=dt["name"], document_count=dt.get("document_count", 0))
             for dt in dt_r.json()["results"]
         ]
+        storage_paths = [
+            StoragePath(id=sp["id"], name=sp["name"], document_count=sp.get("document_count", 0))
+            for sp in sp_r.json()["results"]
+        ]
 
-        # Identify inbox tag (named "INBOX" or has highest document count among unprocessed)
         inbox_tag = next(
             (t for t in tags if t.name.upper() == "INBOX"),
             None,
@@ -106,6 +122,7 @@ class PaperlessClient:
             tags=tags,
             correspondents=correspondents,
             document_types=document_types,
+            storage_paths=storage_paths,
             inbox_tag_id=inbox_tag.id if inbox_tag else None,
         )
 
@@ -147,6 +164,7 @@ class PaperlessClient:
         title: str | None = None,
         correspondent: int | None = None,
         document_type: int | None = None,
+        storage_path: int | None = None,
         tags: list[int] | None = None,
         remove_tag: int | None = None,
     ) -> Document:
@@ -158,11 +176,12 @@ class PaperlessClient:
             payload["correspondent"] = correspondent
         if document_type is not None:
             payload["document_type"] = document_type
+        if storage_path is not None:
+            payload["storage_path"] = storage_path
         if tags is not None:
             payload["tags"] = tags
 
         async with self._client() as c:
-            # Fetch current tags to compute removal
             if remove_tag is not None and tags is None:
                 doc = await self.get_document(doc_id)
                 payload["tags"] = [t for t in doc.tags if t != remove_tag]
@@ -177,6 +196,13 @@ class PaperlessClient:
             r.raise_for_status()
         d = r.json()
         return Correspondent(id=d["id"], name=d["name"])
+
+    async def create_document_type(self, name: str) -> DocumentType:
+        async with self._client() as c:
+            r = await c.post("/api/document_types/", json={"name": name})
+            r.raise_for_status()
+        d = r.json()
+        return DocumentType(id=d["id"], name=d["name"])
 
     async def create_tag(self, name: str) -> Tag:
         async with self._client() as c:
@@ -224,6 +250,7 @@ def _parse_document(d: dict) -> Document:
         correspondent=d.get("correspondent"),
         document_type=d.get("document_type"),
         tags=d.get("tags", []),
+        storage_path=d.get("storage_path"),
         archive_serial_number=d.get("archive_serial_number"),
         original_file_name=d.get("original_file_name"),
     )
