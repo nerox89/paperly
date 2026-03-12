@@ -12,6 +12,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
@@ -66,6 +67,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="paperly", lifespan=lifespan)
+
+_static = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=_static), name="static")
 
 
 # ---------------------------------------------------------------------------

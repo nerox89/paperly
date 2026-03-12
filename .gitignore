@@ -6,3 +6,5 @@ dist/
 *.egg-info/
 .DS_Store
 *.pyc
+node_modules/
+src/paperly/static/tailwind.css
