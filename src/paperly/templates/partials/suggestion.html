@@ -35,13 +35,22 @@
   </div>
   {% endif %}
 
-  <!-- ── Titel ── -->
-  <div class="mb-3">
-    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Titel</label>
-    <input type="text" name="title" id="field-title" required autofocus
-           value="{{ suggestion.title or doc.title }}"
-           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium
-                  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+  <!-- ── Titel + Datum (two columns) ── -->
+  <div class="grid grid-cols-3 gap-3 mb-3">
+    <div class="col-span-2">
+      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Titel</label>
+      <input type="text" name="title" id="field-title" required autofocus
+             value="{{ suggestion.title or doc.title }}"
+             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+    </div>
+    <div>
+      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Datum</label>
+      <input type="date" name="created" id="field-date"
+             value="{{ (suggestion.created or doc.created or '')[:10] }}"
+             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+    </div>
   </div>
 
   <!-- ── Absender + Dokumenttyp (two columns) ── -->

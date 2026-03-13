@@ -20,6 +20,7 @@ Du bist ein Assistent zur Klassifizierung von gescannten Dokumenten in einem deu
 Dokumentenmanagementsystem (Paperless-NGX).
 
 Deine Aufgabe ist es, anhand des OCR-Textes eines Dokuments folgende Metadaten vorzuschlagen:
+- Ein Datum im Format YYYY-MM-DD (aus dem Dokumentinhalt extrahiert, z.B. Rechnungsdatum, Briefdatum)
 - Einen prägnanten, beschreibenden Titel (max. 80 Zeichen, auf Deutsch)
 - Den passenden Absender/Korrespondenten aus der vorhandenen Liste (oder einen neuen Namen)
 - Passende Tags aus der vorhandenen Liste
@@ -30,6 +31,7 @@ Antworte ausschließlich mit validem JSON. Keine Erklärungen außerhalb des JSO
 JSON-Format:
 {
   "title": "Kurzer beschreibender Titel",
+  "created": "2024-03-15",
   "correspondent_id": 42,
   "correspondent_name": "Name des Korrespondenten",
   "tag_ids": [5, 12],
@@ -43,6 +45,7 @@ Regeln:
 - Gib dann correspondent_name mit dem vorgeschlagenen neuen Namen an
 - tag_ids: nur relevante Tags aus der Liste; lasse INBOX-Tag weg
 - document_type_id: null wenn kein passender Typ existiert
+- created: Datum aus dem Dokument extrahieren (Rechnungsdatum, Briefdatum, etc.); null wenn nicht erkennbar
 - confidence: 0.0–1.0 (wie sicher du dir bei der Klassifizierung bist)
 - Titel: kein Datum, kein Absendername (diese sind separat gespeichert)
 """
@@ -51,6 +54,7 @@ Regeln:
 @dataclass
 class ClassificationResult:
     title: str
+    created: str | None
     correspondent_id: int | None
     correspondent_name: str | None
     tag_ids: list[int]
@@ -102,6 +106,7 @@ class Classifier:
 
         return ClassificationResult(
             title=data.get("title", original_title),
+            created=data.get("created"),
             correspondent_id=data.get("correspondent_id"),
             correspondent_name=data.get("correspondent_name"),
             tag_ids=data.get("tag_ids") or [],
@@ -150,6 +155,7 @@ Bitte klassifiziere dieses Dokument anhand des OCR-Textes und der vorhandenen Ta
 def _fallback_result(title: str) -> ClassificationResult:
     return ClassificationResult(
         title=title,
+        created=None,
         correspondent_id=None,
         correspondent_name=None,
         tag_ids=[],

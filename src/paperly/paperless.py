@@ -162,6 +162,7 @@ class PaperlessClient:
         doc_id: int,
         *,
         title: str | None = None,
+        created: str | None = None,
         correspondent: int | None = None,
         document_type: int | None = None,
         storage_path: int | None = None,
@@ -172,6 +173,8 @@ class PaperlessClient:
         payload: dict = {}
         if title is not None:
             payload["title"] = title
+        if created is not None:
+            payload["created"] = created
         if correspondent is not None:
             payload["correspondent"] = correspondent
         if document_type is not None:

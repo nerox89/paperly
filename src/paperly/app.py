@@ -147,6 +147,7 @@ async def apply_document(
     request: Request,
     doc_id: int,
     title: Annotated[str, Form()],
+    created: Annotated[str, Form()] = "",
     correspondent_id: Annotated[str, Form()] = "",
     correspondent_new: Annotated[str, Form()] = "",
     document_type_id: Annotated[str, Form()] = "",
@@ -193,6 +194,7 @@ async def apply_document(
     await state.paperless.update_document(
         doc_id,
         title=title,
+        created=created or None,
         correspondent=corr_id,
         document_type=dt_id,
         storage_path=sp_id,
