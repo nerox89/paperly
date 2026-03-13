@@ -219,6 +219,11 @@ class PaperlessClient:
             r = await c.delete(f"/api/correspondents/{correspondent_id}/")
             r.raise_for_status()
 
+    async def delete_document(self, doc_id: int) -> None:
+        async with self._client() as c:
+            r = await c.delete(f"/api/documents/{doc_id}/")
+            r.raise_for_status()
+
     async def delete_document_type(self, document_type_id: int) -> None:
         async with self._client() as c:
             r = await c.delete(f"/api/document_types/{document_type_id}/")

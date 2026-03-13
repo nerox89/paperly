@@ -216,6 +216,14 @@ async def skip_document(doc_id: int):
     return RedirectResponse("/", status_code=303)
 
 
+@app.post("/document/{doc_id}/delete")
+async def delete_document(doc_id: int):
+    """Permanently delete a document from Paperless."""
+    await state.paperless.delete_document(doc_id)
+    state.suggestion_cache.pop(doc_id, None)
+    return RedirectResponse("/", status_code=303)
+
+
 @app.get("/proxy/thumb/{doc_id}")
 async def proxy_thumb(doc_id: int):
     """Proxy document thumbnail through paperly (avoids CORS issues)."""

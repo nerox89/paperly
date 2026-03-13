@@ -164,6 +164,17 @@
        class="px-3 py-2.5 text-sm text-gray-400 border border-gray-200 rounded-lg
               hover:bg-gray-50 transition-colors flex items-center"
        title="Zurück zur Inbox (Esc)">✕</a>
+    <!-- Delete button — requires confirmation -->
+    <form method="post" action="/document/{{ doc.id }}/delete" class="contents"
+          onsubmit="return confirm('Dokument „{{ doc.title[:50] }}" unwiderruflich löschen?')">
+      <button type="submit" id="delete-btn"
+              class="px-3 py-2.5 text-sm text-red-400 border border-red-200 rounded-lg
+                     hover:bg-red-50 hover:text-red-600 hover:border-red-300 active:bg-red-100
+                     transition-colors flex items-center"
+              title="Dokument löschen (unwiderruflich)">
+        🗑
+      </button>
+    </form>
   </div>
 
 </form>
