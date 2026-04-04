@@ -81,9 +81,8 @@
       <input type="text" name="correspondent_new" id="corr-new"
              placeholder="Name eingeben…"
              value="{{ suggestion.correspondent_name if not suggestion.correspondent_id else '' }}"
-             class="input-dark mt-1.5"
-             style="border-color: rgba(34, 211, 238, 0.3);"
-             {% if not (not suggestion.correspondent_id and suggestion.correspondent_name) %}hidden{% endif %}>
+             class="input-dark mt-1.5 {% if not (not suggestion.correspondent_id and suggestion.correspondent_name) %}hidden{% endif %}"
+             style="border-color: rgba(34, 211, 238, 0.3);">
     </div>
     <div>
       <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Dokumenttyp</label>
@@ -196,9 +195,11 @@ function toggleNew(sel, inputId) {
   const input = document.getElementById(inputId);
   if (sel.value === "__new__") {
     sel.value = "";
+    input.classList.remove("hidden");
     input.hidden = false;
     input.focus();
   } else {
+    input.classList.add("hidden");
     input.hidden = true;
     input.value = "";
   }
@@ -207,6 +208,7 @@ function toggleNew(sel, inputId) {
   const corrSel = document.getElementById("corr-select");
   const corrNew = document.getElementById("corr-new");
   if (corrNew && corrNew.value && !corrSel.value) {
+    corrNew.classList.remove("hidden");
     corrNew.hidden = false;
   }
 })();
