@@ -9,3 +9,5 @@ dist/
 node_modules/
 src/paperly/static/tailwind.css
 *.db
+*.db-shm
+*.db-wal
