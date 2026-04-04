@@ -1,7 +1,7 @@
 <!-- Apply-all results partial -->
-<div class="flex items-center gap-3 text-sm">
-  <span class="text-green-700 font-medium">✓ {{ applied }} übernommen</span>
-  {% if skipped > 0 %}<span class="text-gray-500">· {{ skipped }} übersprungen</span>{% endif %}
-  {% if errors > 0 %}<span class="text-red-600">· {{ errors }} Fehler</span>{% endif %}
-  <a href="/review" class="text-blue-600 hover:text-blue-800 ml-2">↻ Aktualisieren</a>
+<div class="glass-sm px-4 py-3 flex items-center gap-4 text-sm animate-in">
+  <span class="chip-green font-mono font-semibold">✓ {{ applied }} übernommen</span>
+  {% if skipped > 0 %}<span class="chip font-mono">{{ skipped }} übersprungen</span>{% endif %}
+  {% if errors > 0 %}<span class="chip-rose font-mono">{{ errors }} Fehler</span>{% endif %}
+  <a href="/review" class="ml-auto text-cyan-400 hover:text-cyan-300 font-medium text-xs transition-colors">↻ Aktualisieren</a>
 </div>

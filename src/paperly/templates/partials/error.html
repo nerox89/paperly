@@ -1,12 +1,14 @@
 <!-- Error message partial — shown when classification fails -->
-<div class="flex flex-col items-center justify-center py-12 text-red-500">
-  <p class="text-2xl mb-3">⚠️</p>
-  <p class="text-sm font-medium mb-2">Klassifizierung fehlgeschlagen</p>
-  <p class="text-xs text-gray-500 max-w-sm text-center">{{ error }}</p>
-  <button hx-get="/document/{{ request.path_params.get('doc_id', '') }}/classify"
-          hx-target="#suggestion-area"
-          hx-swap="innerHTML"
-          class="mt-4 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-    🔄 Erneut versuchen
-  </button>
+<div class="flex flex-col items-center justify-center py-12 animate-in">
+  <div class="glass px-8 py-6 text-center max-w-sm" style="border-color: rgba(244, 63, 94, 0.2);">
+    <p class="text-3xl mb-3">⚠️</p>
+    <p class="text-sm font-mono font-semibold text-rose-400 mb-2">Klassifizierung fehlgeschlagen</p>
+    <p class="text-xs text-slate-500 mb-4">{{ error }}</p>
+    <button hx-get="/document/{{ request.path_params.get('doc_id', '') }}/classify"
+            hx-target="#suggestion-area"
+            hx-swap="innerHTML"
+            class="btn-ghost text-sm inline-flex items-center gap-2">
+      🔄 Erneut versuchen
+    </button>
+  </div>
 </div>

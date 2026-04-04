@@ -1,19 +1,19 @@
 <!-- Cleanup results partial — shown after executing cleanup -->
-<div class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-  <h3 class="text-sm font-semibold text-gray-700 mb-3">Ergebnisse</h3>
-  <div class="space-y-1">
+<div class="glass px-5 py-4 animate-in">
+  <h3 class="text-sm font-mono font-semibold text-slate-200 mb-3">Ergebnisse</h3>
+  <div class="space-y-2">
     {% for r in results %}
-    <div class="flex items-center gap-2 text-sm">
+    <div class="flex items-center gap-3 text-sm">
       {% if r.ok %}
-        <span class="text-green-600">✓</span>
+        <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400 text-xs">✓</span>
       {% else %}
-        <span class="text-red-600">✗</span>
+        <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/10 text-rose-400 text-xs">✗</span>
       {% endif %}
-      <span class="{% if r.ok %}text-gray-700{% else %}text-red-600{% endif %}">{{ r.action }}</span>
+      <span class="{% if r.ok %}text-slate-300{% else %}text-rose-400{% endif %}">{{ r.action }}</span>
     </div>
     {% endfor %}
   </div>
-  <a href="/cleanup" class="inline-block mt-3 text-sm text-blue-600 hover:text-blue-800">
+  <a href="/cleanup" class="inline-block mt-4 text-sm text-cyan-400 hover:text-cyan-300 font-medium transition-colors">
     ↻ Neu analysieren
   </a>
 </div>

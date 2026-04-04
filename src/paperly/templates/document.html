@@ -1,42 +1,66 @@
 {% extends "base.html" %}
 
 {% block title %}{{ doc.title }} — paperly{% endblock %}
-{% block main_class %}h-[calc(100vh-49px)] flex flex-col{% endblock %}
+{% block container_class %}{% endblock %}
+{% block main_class %}{% endblock %}
 
 {% block content %}
-<div class="flex flex-1 min-h-0 gap-0">
+<div class="flex" style="height: calc(100vh - 3.5rem);">
 
-  <!-- Left: PDF preview -->
-  <div class="w-1/2 flex flex-col border-r border-gray-200 bg-gray-900">
-    <div class="flex items-center justify-between px-4 py-2 bg-gray-800 text-white text-sm">
-      <span class="truncate max-w-xs text-gray-300">{{ doc.original_file_name or doc.title }}</span>
+  <!-- ═══ Left Panel: PDF Viewer (55%) ═══ -->
+  <div class="flex flex-col" style="width: 55%; background: #0a0f1a; border-right: 1px solid rgba(255,255,255,0.06);">
+    <!-- Top bar -->
+    <div class="flex items-center justify-between px-4 py-2.5 shrink-0"
+         style="background: rgba(15, 23, 42, 0.8); border-bottom: 1px solid rgba(255,255,255,0.06);">
+      <span class="truncate text-sm text-slate-400 font-mono max-w-[70%]">
+        {{ doc.original_file_name or doc.title }}
+      </span>
       <a href="{{ paperless_url }}/documents/{{ doc.id }}" target="_blank"
-         class="text-xs text-gray-400 hover:text-white ml-4 flex-shrink-0">
-        In Paperless öffnen ↗
+         class="text-xs text-slate-500 hover:text-cyan-400 transition-colors ml-4 flex-shrink-0 flex items-center gap-1.5">
+        <span>Paperless</span>
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-4.5-6H18m0 0v4.5m0-4.5L10.5 13.5"/>
+        </svg>
       </a>
     </div>
+    <!-- PDF iframe -->
     <iframe src="/proxy/preview/{{ doc.id }}"
-            class="flex-1 w-full"
+            class="w-full flex-1 min-h-0"
+            style="border: none; background: #0a0f1a;"
             title="Dokumentvorschau">
     </iframe>
   </div>
 
-  <!-- Right: metadata editor -->
-  <div class="w-1/2 flex flex-col overflow-y-auto bg-white">
+  <!-- ═══ Right Panel: Metadata Editor (45%) ═══ -->
+  <div class="flex flex-col overflow-y-auto" style="width: 45%; background: rgba(15, 23, 42, 0.4);">
 
-    <!-- Header with doc info -->
-    <div class="px-6 pt-5 pb-3 border-b border-gray-100">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <p class="text-xs text-gray-400 mb-1">Dokument #{{ doc.id }} · {{ doc.created[:10] if doc.created else '' }}</p>
-          <h2 class="text-base font-semibold text-gray-900">{{ doc.title or '(kein Titel)' }}</h2>
+    <!-- Back link + header -->
+    <div class="px-6 pt-5 pb-4 shrink-0" style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+      <!-- Back -->
+      <a href="/" class="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-cyan-400 transition-colors mb-3 group">
+        <svg class="w-4 h-4 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+        </svg>
+        <span>Inbox</span>
+        <kbd>Esc</kbd>
+      </a>
+
+      <!-- Doc header -->
+      <div class="flex items-start gap-3 animate-in">
+        <span class="chip chip-cyan font-mono shrink-0 mt-0.5">#{{ doc.id }}</span>
+        <div class="min-w-0">
+          <h2 class="text-base font-semibold text-slate-100 font-mono truncate" title="{{ doc.title }}">
+            {{ doc.title or '(kein Titel)' }}
+          </h2>
+          {% if doc.created %}
+          <p class="text-xs text-slate-500 mt-1 font-mono">{{ doc.created[:10] }}</p>
+          {% endif %}
         </div>
-        <a href="/" class="text-sm text-gray-400 hover:text-gray-700 flex-shrink-0 mt-1">← Inbox</a>
       </div>
     </div>
 
-    <!-- AI suggestion loader -->
-    <div id="suggestion-area" class="flex-1 px-6 py-4">
+    <!-- AI Suggestion area -->
+    <div id="suggestion-area" class="flex-1 px-6 py-5">
       {% if suggestion %}
         {% include "partials/suggestion.html" %}
       {% else %}
@@ -44,13 +68,32 @@
            hx-trigger="load"
            hx-target="#suggestion-area"
            hx-swap="innerHTML"
-           class="flex flex-col items-center justify-center py-16 text-gray-400">
-        <svg class="animate-spin h-8 w-8 mb-3" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-          <path class="opacity-75" fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-        </svg>
-        <p class="text-sm">Claude analysiert das Dokument…</p>
+           class="flex flex-col items-center justify-center py-20 animate-in">
+        <!-- Animated scanner -->
+        <div class="relative mb-6">
+          <div class="w-16 h-16 rounded-xl flex items-center justify-center"
+               style="background: rgba(34, 211, 238, 0.06); border: 1px solid rgba(34, 211, 238, 0.15);">
+            <svg class="w-7 h-7 text-cyan-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"/>
+            </svg>
+          </div>
+          <!-- Scanning line -->
+          <div class="absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-cyan-400 to-transparent"
+               style="animation: scan 2s ease-in-out infinite; top: 50%;">
+          </div>
+        </div>
+        <p class="text-sm font-mono text-cyan-400 mb-1.5">Klassifiziere...</p>
+        <p class="text-xs text-slate-600">Claude analysiert das Dokument</p>
+
+        <!-- Skeleton fields -->
+        <div class="w-full mt-8 space-y-3 max-w-sm">
+          <div class="h-8 rounded-lg animate-pulse" style="background: rgba(255,255,255,0.04);"></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="h-8 rounded-lg animate-pulse" style="background: rgba(255,255,255,0.03);"></div>
+            <div class="h-8 rounded-lg animate-pulse" style="background: rgba(255,255,255,0.03);"></div>
+          </div>
+          <div class="h-8 rounded-lg animate-pulse" style="background: rgba(255,255,255,0.02); width: 60%;"></div>
+        </div>
       </div>
       {% endif %}
     </div>
@@ -58,15 +101,25 @@
   </div>
 </div>
 
+<style>
+  @keyframes scan {
+    0%, 100% { transform: translateY(-20px); opacity: 0; }
+    50% { transform: translateY(20px); opacity: 1; }
+  }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Keyboard shortcuts
 document.addEventListener("keydown", function(e) {
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
-  if (e.key === "Escape") window.location.href = "/";
-  if (e.key === "s") {
+  const inField = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
+  if (e.key === "Escape") {
+    e.preventDefault();
+    window.location.href = "/";
+    return;
+  }
+  if (!inField && e.key === "s") {
+    e.preventDefault();
     document.getElementById("skip-btn")?.click();
   }
 });

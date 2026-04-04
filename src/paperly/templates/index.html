@@ -3,112 +3,180 @@
 {% block title %}Inbox — paperly{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto">
+<style>
+  .doc-card {
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .doc-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(34, 211, 238, 0.3);
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.08);
+  }
+  .stat-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2.25rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .page-btn {
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 2.25rem;
+    text-align: center;
+  }
+</style>
 
-  <!-- Batch progress area -->
-  <div id="batch-area" class="mb-4">
-    {% include "partials/batch_progress.html" %}
+<!-- Hero stats row -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+  <div class="glass p-5 animate-in">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="text-2xl">📥</span>
+      <span class="text-xs font-medium uppercase tracking-widest text-slate-500">Inbox</span>
+    </div>
+    <p class="stat-number text-cyan-400">{{ total }}</p>
+    <p class="text-xs text-slate-500 mt-1.5 font-mono">Dokumente</p>
   </div>
 
-  <!-- Progress bar -->
-  <div class="mb-6">
-    <div class="flex justify-between text-sm text-gray-600 mb-1">
-      <span>Inbox: <strong>{{ total }}</strong> Dokumente</span>
-      <span>Gesamt: {{ total_docs }} | Verarbeitet: {{ processed }}</span>
+  <div class="glass p-5 animate-in">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="text-2xl">✅</span>
+      <span class="text-xs font-medium uppercase tracking-widest text-slate-500">Verarbeitet</span>
     </div>
+    <p class="stat-number text-emerald-400">{{ processed }}</p>
     {% set pct = ((processed / total_docs) * 100) | round(1) if total_docs > 0 else 0 %}
-    <div class="w-full bg-gray-200 rounded-full h-2.5">
-      <div class="bg-blue-600 h-2.5 rounded-full transition-all"
-           style="width: {{ pct }}%"></div>
+    <p class="text-xs text-slate-500 mt-1.5 font-mono">{{ pct }}% von {{ total_docs }}</p>
+  </div>
+
+  <div class="glass p-5 animate-in">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="text-2xl">🤖</span>
+      <span class="text-xs font-medium uppercase tracking-widest text-slate-500">Vorschläge</span>
     </div>
-    <p class="text-xs text-gray-400 mt-1">{{ pct }}% verarbeitet</p>
+    <p class="stat-number text-violet-400">{{ cached_count }}</p>
+    <p class="text-xs text-slate-500 mt-1.5 font-mono">gecached</p>
   </div>
-
-  <!-- Action bar -->
-  {% if docs %}
-  <div class="flex items-center gap-3 mb-4">
-    <button hx-post="/batch/start"
-            hx-target="#batch-area"
-            hx-swap="innerHTML"
-            hx-on::after-request="setTimeout(() => { const el = document.getElementById('batch-area'); if (el) htmx.ajax('GET', '/batch/progress', {target: '#batch-area', swap: 'innerHTML'}); }, 500)"
-            class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
-      🤖 Alle klassifizieren
-    </button>
-    {% if cached_count > 0 %}
-    <a href="/review"
-       class="px-4 py-2 text-sm text-blue-600 border border-blue-300 rounded-lg hover:bg-blue-50 transition-colors font-medium">
-      📋 {{ cached_count }} Vorschläge prüfen
-    </a>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  <!-- Document list -->
-  {% if docs %}
-  <div class="space-y-2">
-    {% for doc in docs %}
-    <a href="/document/{{ doc.id }}"
-       class="flex items-center gap-4 bg-white rounded-lg border border-gray-200 px-4 py-3
-              hover:border-blue-400 hover:shadow-sm transition-all group">
-
-      <!-- Thumbnail -->
-      <div class="w-12 h-16 flex-shrink-0 bg-gray-100 rounded overflow-hidden">
-        <img src="/proxy/thumb/{{ doc.id }}" alt=""
-             class="w-full h-full object-cover"
-             onerror="this.style.display='none'">
-      </div>
-
-      <!-- Info -->
-      <div class="flex-1 min-w-0">
-        <p class="font-medium text-gray-900 truncate group-hover:text-blue-700">
-          {{ doc.title or '(kein Titel)' }}
-        </p>
-        <p class="text-xs text-gray-400 mt-0.5">
-          {{ doc.created[:10] if doc.created else '' }}
-          {% if doc.correspondent %}
-            · {{ taxonomy.correspondent_by_id(doc.correspondent).name if taxonomy.correspondent_by_id(doc.correspondent) else doc.correspondent }}
-          {% endif %}
-          {% if doc.document_type %}
-            · {{ taxonomy.document_type_by_id(doc.document_type).name if taxonomy.document_type_by_id(doc.document_type) else '' }}
-          {% endif %}
-        </p>
-      </div>
-
-      <svg class="w-4 h-4 text-gray-300 group-hover:text-blue-400 flex-shrink-0" fill="none"
-           viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-      </svg>
-    </a>
-    {% endfor %}
-  </div>
-
-  <!-- Pagination -->
-  {% if total > page_size %}
-  <div class="flex justify-center gap-3 mt-6">
-    {% if page > 1 %}
-    <a href="/?page={{ page - 1 }}" class="px-3 py-1 text-sm border rounded hover:bg-gray-100">← Zurück</a>
-    {% endif %}
-    <span class="px-3 py-1 text-sm text-gray-500">Seite {{ page }}</span>
-    {% if page * page_size < total %}
-    <a href="/?page={{ page + 1 }}" class="px-3 py-1 text-sm border rounded hover:bg-gray-100">Weiter →</a>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  {% else %}
-  <div class="text-center py-16 text-gray-500">
-    <p class="text-4xl mb-3">🎉</p>
-    <p class="text-lg font-medium">Inbox ist leer!</p>
-    <p class="text-sm mt-1">Alle Dokumente wurden verarbeitet.</p>
-  </div>
-  {% endif %}
-
 </div>
+
+<!-- Overall progress bar -->
+<div class="mb-8 animate-in">
+  <div class="progress-neon">
+    <div class="fill" style="width: {{ pct }}%"></div>
+  </div>
+</div>
+
+<!-- Batch action bar -->
+{% if docs %}
+<div class="flex flex-wrap items-center gap-3 mb-6">
+  <button hx-post="/batch/start"
+          hx-target="#batch-area"
+          hx-swap="innerHTML"
+          hx-on::after-request="setTimeout(() => { const el = document.getElementById('batch-area'); if (el) htmx.ajax('GET', '/batch/progress', {target: '#batch-area', swap: 'innerHTML'}); }, 500)"
+          class="btn-neon text-sm animate-in">
+    🤖 Alle klassifizieren
+  </button>
+  {% if cached_count > 0 %}
+  <a href="/review" class="btn-violet text-sm animate-in">
+    📋 {{ cached_count }} Vorschläge prüfen
+  </a>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Batch progress area -->
+<div id="batch-area" class="mb-6">
+  {% include "partials/batch_progress.html" %}
+</div>
+
+<!-- Document grid -->
+{% if docs %}
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+  {% for doc in docs %}
+  <a href="/document/{{ doc.id }}"
+     class="glass doc-card p-4 flex gap-4 items-start group animate-in">
+
+    <!-- Thumbnail -->
+    <div class="w-[50px] h-[64px] flex-shrink-0 rounded-md overflow-hidden bg-white/5">
+      <img src="/proxy/thumb/{{ doc.id }}" alt=""
+           loading="lazy"
+           class="w-full h-full object-cover"
+           onerror="this.parentElement.innerHTML='<div class=\'flex items-center justify-center w-full h-full text-slate-600 text-lg\'>📄</div>'">
+    </div>
+
+    <!-- Info -->
+    <div class="flex-1 min-w-0">
+      <p class="font-medium text-sm text-slate-200 truncate group-hover:text-cyan-400 transition-colors">
+        {{ doc.title or '(kein Titel)' }}
+      </p>
+      <p class="text-xs text-slate-500 mt-1 font-mono">
+        {{ doc.created[:10] if doc.created else '' }}
+      </p>
+      <div class="flex flex-wrap gap-1.5 mt-2">
+        {% if doc.correspondent %}
+          {% set corr = taxonomy.correspondent_by_id(doc.correspondent) %}
+          {% if corr %}
+          <span class="chip chip-cyan text-[0.65rem]">{{ corr.name }}</span>
+          {% endif %}
+        {% endif %}
+        {% if doc.document_type %}
+          {% set dtype = taxonomy.document_type_by_id(doc.document_type) %}
+          {% if dtype %}
+          <span class="chip chip-violet text-[0.65rem]">{{ dtype.name }}</span>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Arrow -->
+    <svg class="w-4 h-4 text-slate-600 group-hover:text-cyan-400 flex-shrink-0 mt-1 transition-colors" fill="none"
+         viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+    </svg>
+  </a>
+  {% endfor %}
+</div>
+
+<!-- Pagination -->
+{% if total > page_size %}
+{% set total_pages = ((total - 1) // page_size) + 1 %}
+<nav class="flex items-center justify-center gap-1 mt-10 animate-in">
+  {% if page > 1 %}
+  <a href="/?page={{ page - 1 }}" class="btn-ghost page-btn text-xs px-3 py-1.5">←</a>
+  {% endif %}
+
+  {% for p in range(1, total_pages + 1) %}
+    {% if p == page %}
+    <span class="page-btn text-xs px-3 py-1.5 rounded-md bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">{{ p }}</span>
+    {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+    <a href="/?page={{ p }}" class="btn-ghost page-btn text-xs px-3 py-1.5">{{ p }}</a>
+    {% elif p == page - 3 or p == page + 3 %}
+    <span class="text-xs text-slate-600 px-1 font-mono">…</span>
+    {% endif %}
+  {% endfor %}
+
+  {% if page * page_size < total %}
+  <a href="/?page={{ page + 1 }}" class="btn-ghost page-btn text-xs px-3 py-1.5">→</a>
+  {% endif %}
+</nav>
+{% endif %}
+
+{% else %}
+<!-- Empty state -->
+<div class="glass max-w-md mx-auto text-center py-16 px-8 animate-in">
+  <p class="text-5xl mb-4">🎉</p>
+  <p class="text-lg font-semibold text-slate-200 font-mono">Inbox ist leer!</p>
+  <p class="text-sm text-slate-500 mt-2">Alle Dokumente wurden verarbeitet.</p>
+  {% if cached_count > 0 %}
+  <a href="/review" class="btn-violet text-sm inline-block mt-6">
+    📋 {{ cached_count }} Vorschläge prüfen
+  </a>
+  {% endif %}
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Replace stats badge content with readable text
+// Parse JSON from /stats and update the nav badge
 document.body.addEventListener("htmx:afterSwap", function(e) {
   if (e.detail.target.id === "stats-badge") {
     try {

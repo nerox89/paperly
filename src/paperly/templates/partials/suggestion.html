@@ -1,33 +1,45 @@
-<!-- AI Suggestion form — redesigned for fast review workflow -->
+<!-- AI Suggestion form — Cyber/Technical dark theme -->
 
 {% set conf_pct = (suggestion.confidence * 100) | round | int %}
-{% set conf_color = "bg-green-100 text-green-700 border-green-200" if suggestion.confidence >= 0.8 else ("bg-yellow-100 text-yellow-700 border-yellow-200" if suggestion.confidence >= 0.5 else "bg-red-100 text-red-600 border-red-200") %}
+{% set conf_color_class = "chip-green" if suggestion.confidence >= 0.8 else ("chip-amber" if suggestion.confidence >= 0.5 else "chip-rose") %}
+{% set ring_color = "#10b981" if suggestion.confidence >= 0.8 else ("#f59e0b" if suggestion.confidence >= 0.5 else "#f43f5e") %}
 
 <form method="post" action="/document/{{ doc.id }}/apply" id="apply-form" class="flex flex-col gap-0">
 
-  <!-- AI Header bar -->
-  <div class="flex items-center gap-3 mb-4 px-1">
-    <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border {{ conf_color }}">
-      🤖 {{ conf_pct }}% Konfidenz
-    </span>
-    {% if suggestion.reasoning %}
-    <p class="text-xs text-gray-400 truncate flex-1" title="{{ suggestion.reasoning }}">
-      {{ suggestion.reasoning[:90] }}{% if suggestion.reasoning|length > 90 %}…{% endif %}
-    </p>
-    {% endif %}
+  <!-- AI Header bar with confidence ring -->
+  <div class="flex items-center gap-4 mb-5">
+    <!-- Confidence ring SVG -->
+    <div class="relative flex-shrink-0">
+      <svg class="confidence-ring" width="48" height="48" viewBox="0 0 64 64"
+           style="--progress: {{ suggestion.confidence }}; --color: {{ ring_color }};">
+        <circle class="track" cx="32" cy="32" r="28" fill="none" stroke-width="4"/>
+        <circle class="fill" cx="32" cy="32" r="28" fill="none" stroke-width="4" stroke-linecap="round"/>
+      </svg>
+      <span class="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold"
+            style="color: {{ ring_color }};">{{ conf_pct }}%</span>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="{{ conf_color_class }} chip text-xs">🤖 KI-Vorschlag</span>
+      </div>
+      {% if suggestion.reasoning %}
+      <p class="text-xs text-slate-500 truncate" title="{{ suggestion.reasoning }}">
+        {{ suggestion.reasoning[:100] }}{% if suggestion.reasoning|length > 100 %}…{% endif %}
+      </p>
+      {% endif %}
+    </div>
   </div>
 
   <!-- Current tags (read-only context strip) -->
   {% set current_tags = doc.tags %}
   {% if current_tags %}
-  <div class="flex flex-wrap gap-1.5 mb-4 px-1">
-    <span class="text-xs text-gray-400 mr-1 self-center">Aktuell:</span>
+  <div class="flex flex-wrap gap-1.5 mb-4">
+    <span class="text-xs text-slate-500 mr-1 self-center font-mono">Aktuell:</span>
     {% for tid in current_tags %}
       {% set tag = taxonomy.tag_by_id(tid) %}
       {% if tag %}
-        <span class="text-xs px-2 py-0.5 rounded-full
-          {% if tid == taxonomy.inbox_tag_id %}bg-orange-100 text-orange-700 font-medium
-          {% else %}bg-gray-100 text-gray-600{% endif %}">
+        <span class="chip text-xs
+          {% if tid == taxonomy.inbox_tag_id %}chip-amber{% endif %}">
           {{ tag.name }}
         </span>
       {% endif %}
@@ -35,34 +47,29 @@
   </div>
   {% endif %}
 
-  <!-- ── Titel + Datum (two columns) ── -->
+  <!-- Title + Date -->
   <div class="grid grid-cols-3 gap-3 mb-3">
     <div class="col-span-2">
-      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Titel</label>
+      <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Titel</label>
       <input type="text" name="title" id="field-title" required autofocus
              value="{{ suggestion.title or doc.title }}"
-             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium
-                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+             class="input-dark font-medium">
     </div>
     <div>
-      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Datum</label>
+      <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Datum</label>
       <input type="date" name="created" id="field-date"
              value="{{ (suggestion.created or doc.created or '')[:10] }}"
-             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+             class="input-dark">
     </div>
   </div>
 
-  <!-- ── Absender + Dokumenttyp (two columns) ── -->
+  <!-- Correspondent + Document Type -->
   <div class="grid grid-cols-2 gap-3 mb-3">
-
-    <!-- Absender -->
     <div>
-      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Absender</label>
+      <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Absender</label>
       <select name="correspondent_id" id="corr-select"
               onchange="toggleNew(this, 'corr-new')"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                     focus:outline-none focus:ring-2 focus:ring-blue-500">
+              class="input-dark">
         <option value="">– keiner –</option>
         <option value="__new__">＋ Neu…</option>
         {% for c in taxonomy.correspondents | sort(attribute='name') %}
@@ -74,18 +81,15 @@
       <input type="text" name="correspondent_new" id="corr-new"
              placeholder="Name eingeben…"
              value="{{ suggestion.correspondent_name if not suggestion.correspondent_id else '' }}"
-             class="mt-1.5 w-full border border-blue-400 rounded-lg px-3 py-2 text-sm
-                    focus:outline-none focus:ring-2 focus:ring-blue-500
-                    {% if not suggestion.correspondent_id and suggestion.correspondent_name %}block{% else %}hidden{% endif %}">
+             class="input-dark mt-1.5"
+             style="border-color: rgba(34, 211, 238, 0.3);"
+             {% if not (not suggestion.correspondent_id and suggestion.correspondent_name) %}hidden{% endif %}>
     </div>
-
-    <!-- Dokumenttyp -->
     <div>
-      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Dokumenttyp</label>
+      <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Dokumenttyp</label>
       <select name="document_type_id" id="dt-select"
               onchange="toggleNew(this, 'dt-new')"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                     focus:outline-none focus:ring-2 focus:ring-blue-500">
+              class="input-dark">
         <option value="">– keiner –</option>
         <option value="__new__">＋ Neu…</option>
         {% for dt in taxonomy.document_types | sort(attribute='name') %}
@@ -98,17 +102,15 @@
       </select>
       <input type="text" name="document_type_new" id="dt-new"
              placeholder="Typ eingeben…"
-             class="mt-1.5 w-full border border-blue-400 rounded-lg px-3 py-2 text-sm
-                    focus:outline-none focus:ring-2 focus:ring-blue-500 hidden">
+             class="input-dark mt-1.5 hidden"
+             style="border-color: rgba(34, 211, 238, 0.3);">
     </div>
   </div>
 
-  <!-- ── Speicherpfad ── -->
+  <!-- Storage Path -->
   <div class="mb-3">
-    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Speicherpfad</label>
-    <select name="storage_path_id"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                   focus:outline-none focus:ring-2 focus:ring-blue-500">
+    <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Speicherpfad</label>
+    <select name="storage_path_id" class="input-dark">
       <option value="">– keiner –</option>
       {% for sp in taxonomy.storage_paths | sort(attribute='name') %}
       <option value="{{ sp.id }}" {% if doc.storage_path == sp.id %}selected{% endif %}>
@@ -118,9 +120,9 @@
     </select>
   </div>
 
-  <!-- ── Tags ── -->
+  <!-- Tags -->
   <div class="mb-4">
-    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tags</label>
+    <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-2">Tags</label>
     <div class="flex flex-wrap gap-2 mb-2">
       {% for tag in taxonomy.tags | sort(attribute='name') %}
         {% if tag.id != taxonomy.inbox_tag_id %}
@@ -128,8 +130,8 @@
           <input type="checkbox" name="tag_ids" value="{{ tag.id }}"
                  {% if tag.id in suggestion.tag_ids %}checked
                  {% elif tag.id in doc.tags and not suggestion.tag_ids %}checked{% endif %}
-                 class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-          <span class="text-sm text-gray-700 group-hover:text-blue-700 transition-colors">{{ tag.name }}</span>
+                 class="rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500/30 focus:ring-offset-0">
+          <span class="text-sm text-slate-400 group-hover:text-cyan-400 transition-colors">{{ tag.name }}</span>
         </label>
         {% endif %}
       {% endfor %}
@@ -137,12 +139,12 @@
     {% if suggestion.new_tags %}
     <!-- AI-suggested new tags -->
     <div class="flex flex-wrap gap-2 mb-2">
-      <span class="text-xs text-amber-600 font-medium self-center">Neu vorgeschlagen:</span>
+      <span class="text-xs text-violet-400 font-mono font-medium self-center">Neu vorgeschlagen:</span>
       {% for new_tag in suggestion.new_tags %}
       <label class="inline-flex items-center gap-1.5 cursor-pointer select-none group">
         <input type="checkbox" name="new_tag_names" value="{{ new_tag }}" checked
-               class="rounded border-amber-400 text-amber-600 focus:ring-amber-500">
-        <span class="text-sm text-amber-700 group-hover:text-amber-800 font-medium transition-colors">{{ new_tag }}</span>
+               class="rounded border-violet-500 bg-violet-900/30 text-violet-500 focus:ring-violet-500/30 focus:ring-offset-0">
+        <span class="text-sm text-violet-300 group-hover:text-violet-200 font-medium transition-colors">{{ new_tag }}</span>
       </label>
       {% endfor %}
     </div>
@@ -151,40 +153,31 @@
     <div class="flex gap-2 items-center">
       <input type="text" name="tag_new" id="tag-new-input"
              placeholder="＋ Neuen Tag erstellen…"
-             class="flex-1 border border-dashed border-gray-300 rounded-lg px-3 py-1.5 text-sm
-                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-solid text-gray-500
-                    placeholder:text-gray-400">
+             class="input-dark flex-1"
+             style="border-style: dashed; border-color: rgba(255,255,255,0.08);">
     </div>
   </div>
 
-  <!-- ── Actions ── -->
-  <div class="flex gap-2 pt-3 border-t border-gray-100 sticky bottom-0 bg-white pb-1">
+  <!-- Actions -->
+  <div class="flex gap-2 pt-3 border-t border-white/5 sticky bottom-0 pb-1"
+       style="background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(8px);">
     <button type="submit"
-            class="flex-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-semibold
-                   px-4 py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
+            class="btn-neon flex-1 text-sm font-semibold flex items-center justify-center gap-2 py-2.5">
       <span>✓ Übernehmen</span>
-      <kbd class="text-xs bg-blue-500 px-1.5 py-0.5 rounded font-mono opacity-80">↵</kbd>
+      <kbd>↵</kbd>
     </button>
     <form method="post" action="/document/{{ doc.id }}/skip" class="contents">
       <button type="submit" id="skip-btn"
-              class="px-4 py-2.5 text-sm text-gray-500 border border-gray-300 rounded-lg
-                     hover:bg-gray-50 active:bg-gray-100 transition-colors flex items-center gap-1.5">
+              class="btn-ghost text-sm flex items-center gap-1.5 py-2.5">
         Überspringen
-        <kbd class="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">S</kbd>
+        <kbd>S</kbd>
       </button>
     </form>
-    <a href="/"
-       class="px-3 py-2.5 text-sm text-gray-400 border border-gray-200 rounded-lg
-              hover:bg-gray-50 transition-colors flex items-center"
-       title="Zurück zur Inbox (Esc)">✕</a>
-    <!-- Delete button — requires confirmation -->
+    <a href="/" class="btn-ghost text-sm flex items-center py-2.5 px-3" title="Zurück (Esc)">✕</a>
     <form method="post" action="/document/{{ doc.id }}/delete" class="contents"
           onsubmit="return confirm('Dokument „{{ doc.title[:50] }}" unwiderruflich löschen?')">
       <button type="submit" id="delete-btn"
-              class="px-3 py-2.5 text-sm text-red-400 border border-red-200 rounded-lg
-                     hover:bg-red-50 hover:text-red-600 hover:border-red-300 active:bg-red-100
-                     transition-colors flex items-center"
-              title="Dokument löschen (unwiderruflich)">
+              class="btn-danger text-sm flex items-center py-2.5 px-3" title="Löschen">
         🗑
       </button>
     </form>
@@ -193,9 +186,9 @@
 </form>
 
 <!-- OCR preview (collapsible) -->
-<details class="mt-3 text-xs text-gray-400">
-  <summary class="cursor-pointer hover:text-gray-600 select-none py-1">OCR-Text anzeigen</summary>
-  <pre class="mt-1 p-3 bg-gray-50 rounded-lg text-xs whitespace-pre-wrap break-words max-h-40 overflow-y-auto border border-gray-200">{{ suggestion.raw_content_preview or doc.content[:400] }}</pre>
+<details class="mt-4 text-xs text-slate-500">
+  <summary class="cursor-pointer hover:text-slate-300 select-none py-1 font-mono">OCR-Text anzeigen</summary>
+  <pre class="mt-2 p-3 glass-sm text-xs whitespace-pre-wrap break-words max-h-40 overflow-y-auto text-slate-400 font-mono">{{ suggestion.raw_content_preview or doc.content[:400] }}</pre>
 </details>
 
 <script>
@@ -203,22 +196,20 @@ function toggleNew(sel, inputId) {
   const input = document.getElementById(inputId);
   if (sel.value === "__new__") {
     sel.value = "";
-    input.classList.remove("hidden");
+    input.hidden = false;
     input.focus();
   } else {
-    input.classList.add("hidden");
+    input.hidden = true;
     input.value = "";
   }
 }
-// Show correspondent new input if suggestion has a new name
 (function() {
   const corrSel = document.getElementById("corr-select");
   const corrNew = document.getElementById("corr-new");
   if (corrNew && corrNew.value && !corrSel.value) {
-    corrNew.classList.remove("hidden");
+    corrNew.hidden = false;
   }
 })();
-// Keyboard: Enter submits (unless in textarea), S = skip
 document.addEventListener("keydown", function(e) {
   if (e.target.tagName === "TEXTAREA") return;
   if (e.key === "Enter" && e.target.tagName !== "BUTTON" && e.target.tagName !== "A") {

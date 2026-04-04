@@ -3,116 +3,151 @@
 {% block title %}Vorschläge prüfen — paperly{% endblock %}
 
 {% block content %}
-<div class="max-w-6xl mx-auto">
+{% set high_conf_count = items | selectattr('suggestion.confidence', 'ge', auto_apply_threshold) | list | length %}
 
-  <!-- Header -->
-  <div class="mb-6 flex items-center justify-between">
-    <div>
-      <h1 class="text-xl font-semibold text-gray-900 mb-1">Vorschläge prüfen</h1>
-      <p class="text-sm text-gray-500">
-        {{ total_cached }} von {{ total_inbox }} Inbox-Dokumenten klassifiziert.
-        {% if total_inbox > total_cached %}
-        <a href="/" class="text-blue-600 hover:text-blue-800">Weitere klassifizieren →</a>
-        {% endif %}
-      </p>
-    </div>
-
-    <!-- Filters -->
-    <div class="flex items-center gap-3">
-      <form method="get" action="/review" class="flex items-center gap-2">
-        <label class="text-xs text-gray-500">Sortierung:</label>
-        <select name="sort" onchange="this.form.submit()"
-                class="text-xs border border-gray-300 rounded px-2 py-1">
-          <option value="confidence" {% if sort == 'confidence' %}selected{% endif %}>Konfidenz ↑</option>
-          <option value="confidence_desc" {% if sort == 'confidence_desc' %}selected{% endif %}>Konfidenz ↓</option>
-          <option value="title" {% if sort == 'title' %}selected{% endif %}>Titel A–Z</option>
-        </select>
-      </form>
-    </div>
-  </div>
-
-  <!-- Bulk apply bar -->
-  {% if items %}
-  <div class="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
-    <div class="text-sm text-gray-600">
-      <span class="font-medium">{{ items | selectattr('suggestion.confidence', 'ge', auto_apply_threshold) | list | length }}</span>
-      Vorschläge mit ≥ {{ (auto_apply_threshold * 100) | int }}% Konfidenz
-    </div>
-    <div id="apply-all-result" class="flex items-center gap-3">
-      <form hx-post="/review/apply-all" hx-target="#apply-all-result" hx-swap="innerHTML"
-            hx-confirm="Alle Vorschläge mit hoher Konfidenz automatisch übernehmen?">
-        <input type="hidden" name="min_confidence" value="{{ auto_apply_threshold }}">
-        <button type="submit"
-                class="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
-          ✓ Alle mit ≥ {{ (auto_apply_threshold * 100) | int }}% übernehmen
-        </button>
-      </form>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Document list -->
-  {% if items %}
-  <div class="space-y-2">
-    {% for item in items %}
-    {% set doc = item.doc %}
-    {% set s = item.suggestion %}
-    {% set conf_pct = (s.confidence * 100) | round | int %}
-    {% set conf_color = "bg-green-100 text-green-700" if s.confidence >= 0.8 else ("bg-yellow-100 text-yellow-700" if s.confidence >= 0.5 else "bg-red-100 text-red-600") %}
-
-    <div class="bg-white rounded-lg border border-gray-200 px-4 py-3 hover:border-blue-300 transition-colors">
-      <div class="flex items-start gap-4">
-        <!-- Confidence badge -->
-        <span class="inline-flex items-center text-xs font-semibold px-2 py-1 rounded-full {{ conf_color }} flex-shrink-0 mt-0.5">
-          {{ conf_pct }}%
-        </span>
-
-        <!-- Content -->
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 mb-1">
-            <a href="/document/{{ doc.id }}" class="text-sm font-medium text-gray-900 hover:text-blue-700 truncate">
-              {{ s.title }}
-            </a>
-            {% if s.title != doc.title %}
-            <span class="text-xs text-gray-400 truncate max-w-48" title="Vorher: {{ doc.title }}">
-              ← {{ doc.title[:30] }}{% if doc.title | length > 30 %}…{% endif %}
-            </span>
-            {% endif %}
-          </div>
-          <div class="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-            {% if s.created %}<span>📅 {{ s.created }}</span>{% endif %}
-            {% if item.correspondent_name != '–' %}<span>👤 {{ item.correspondent_name }}</span>{% endif %}
-            {% if item.document_type_name != '–' %}<span>📁 {{ item.document_type_name }}</span>{% endif %}
-            {% for tag_name in item.tag_names[:5] %}
-            <span class="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{{ tag_name }}</span>
-            {% endfor %}
-            {% if item.tag_names | length > 5 %}
-            <span class="text-gray-400">+{{ item.tag_names | length - 5 }}</span>
-            {% endif %}
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="flex items-center gap-2 flex-shrink-0">
-          <a href="/document/{{ doc.id }}"
-             class="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-            Bearbeiten
-          </a>
-        </div>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-
-  {% else %}
-  <div class="text-center py-16 text-gray-500">
-    <p class="text-4xl mb-3">📋</p>
-    <p class="text-lg font-medium">Keine Vorschläge vorhanden</p>
-    <p class="text-sm mt-1">
-      <a href="/" class="text-blue-600 hover:text-blue-800">Starte die Batch-Klassifizierung auf der Inbox-Seite.</a>
-    </p>
-  </div>
-  {% endif %}
-
+<!-- Header -->
+<div class="mb-8 animate-in">
+  <h1 class="text-2xl font-mono font-bold text-slate-100 tracking-tight mb-1">Vorschläge prüfen</h1>
+  <p class="text-sm text-slate-400">
+    <span class="font-mono text-cyan-400">{{ total_cached }}</span> von
+    <span class="font-mono text-slate-300">{{ total_inbox }}</span> Inbox-Dokumenten klassifiziert.
+    {% if total_inbox > total_cached %}
+    <a href="/" class="text-cyan-400 hover:text-cyan-300 ml-1 transition-colors">Weitere klassifizieren →</a>
+    {% endif %}
+  </p>
 </div>
+
+<!-- Summary stats -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+  <div class="glass p-4 animate-in">
+    <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Inbox gesamt</div>
+    <div class="text-2xl font-mono font-bold text-cyan-400">{{ total_inbox }}</div>
+  </div>
+  <div class="glass p-4 animate-in">
+    <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Vorschläge gecacht</div>
+    <div class="text-2xl font-mono font-bold text-violet-400">{{ total_cached }}</div>
+  </div>
+  <div class="glass p-4 animate-in">
+    <div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Hohe Konfidenz (≥{{ (auto_apply_threshold * 100) | int }}%)</div>
+    <div class="text-2xl font-mono font-bold text-emerald-400">{{ high_conf_count }}</div>
+  </div>
+</div>
+
+<!-- Filter bar -->
+<div class="glass px-4 py-3 mb-6 flex flex-wrap items-center justify-between gap-3 animate-in">
+  <form method="get" action="/review" class="flex items-center gap-3">
+    <label class="text-xs text-slate-500 uppercase tracking-wider">Sortierung</label>
+    <select name="sort" onchange="this.form.submit()" class="input-dark text-sm w-48">
+      <option value="confidence" {% if sort == 'confidence' %}selected{% endif %}>Konfidenz ↑</option>
+      <option value="confidence_desc" {% if sort == 'confidence_desc' %}selected{% endif %}>Konfidenz ↓</option>
+      <option value="title" {% if sort == 'title' %}selected{% endif %}>Titel A–Z</option>
+    </select>
+  </form>
+  <span class="text-xs text-slate-500 font-mono">{{ items | length }} Ergebnis{{ 'se' if items | length != 1 }}</span>
+</div>
+
+{% if items %}
+
+<!-- Bulk apply section -->
+{% if high_conf_count > 0 %}
+<div class="glass px-5 py-4 mb-8 flex flex-wrap items-center justify-between gap-4 animate-in border-emerald-500/20">
+  <div class="text-sm text-slate-300">
+    <span class="font-mono font-bold text-emerald-400">{{ high_conf_count }}</span>
+    Vorschläge mit ≥&nbsp;<span class="font-mono">{{ (auto_apply_threshold * 100) | int }}%</span> Konfidenz bereit
+  </div>
+  <div id="apply-all-result" class="flex items-center gap-3">
+    <form hx-post="/review/apply-all" hx-target="#apply-all-result" hx-swap="innerHTML"
+          hx-confirm="Alle {{ high_conf_count }} Vorschläge mit ≥{{ (auto_apply_threshold * 100) | int }}% Konfidenz automatisch übernehmen?">
+      <input type="hidden" name="min_confidence" value="{{ auto_apply_threshold }}">
+      <button type="submit" class="btn-neon text-sm flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        Alle mit ≥&nbsp;{{ (auto_apply_threshold * 100) | int }}% übernehmen
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<!-- Suggestion cards -->
+<div class="space-y-3">
+  {% for item in items %}
+  {% set doc = item.doc %}
+  {% set s = item.suggestion %}
+  {% set conf_pct = (s.confidence * 100) | round | int %}
+
+  <div class="glass px-5 py-4 animate-in transition-all duration-200 hover:border-cyan-500/20">
+    <div class="flex items-start gap-5">
+
+      <!-- Confidence badge -->
+      <div class="flex-shrink-0 w-16 text-center pt-0.5">
+        {% if s.confidence >= 0.8 %}
+        <span class="text-2xl font-mono font-bold text-cyan-400 drop-shadow-[0_0_6px_rgba(34,211,238,0.4)]">{{ conf_pct }}%</span>
+        {% elif s.confidence >= 0.5 %}
+        <span class="text-2xl font-mono font-bold text-amber-400 drop-shadow-[0_0_6px_rgba(245,158,11,0.3)]">{{ conf_pct }}%</span>
+        {% else %}
+        <span class="text-2xl font-mono font-bold text-rose-400 drop-shadow-[0_0_6px_rgba(244,63,94,0.3)]">{{ conf_pct }}%</span>
+        {% endif %}
+      </div>
+
+      <!-- Content -->
+      <div class="flex-1 min-w-0">
+        <!-- Title -->
+        <div class="flex items-center gap-2 mb-2 flex-wrap">
+          <span class="text-sm font-semibold text-slate-100 truncate">{{ s.title }}</span>
+          {% if s.title != doc.title %}
+          <span class="text-xs text-slate-500 line-through truncate max-w-[14rem]" title="Vorher: {{ doc.title }}">
+            {{ doc.title[:40] }}{% if doc.title | length > 40 %}…{% endif %}
+          </span>
+          {% endif %}
+        </div>
+
+        <!-- Metadata chips -->
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          {% if item.correspondent_name != '–' %}
+          <span class="chip chip-violet">👤 {{ item.correspondent_name }}</span>
+          {% endif %}
+          {% if item.document_type_name != '–' %}
+          <span class="chip chip-cyan">📁 {{ item.document_type_name }}</span>
+          {% endif %}
+          {% for tag_name in item.tag_names[:5] %}
+          <span class="chip chip-green">{{ tag_name }}</span>
+          {% endfor %}
+          {% if item.tag_names | length > 5 %}
+          <span class="chip chip-amber">+{{ item.tag_names | length - 5 }}</span>
+          {% endif %}
+          {% if s.new_tags %}
+          {% for tag in s.new_tags %}
+          <span class="chip chip-rose">✦ {{ tag }}</span>
+          {% endfor %}
+          {% endif %}
+        </div>
+
+        <!-- Reasoning -->
+        {% if s.reasoning %}
+        <p class="text-xs text-slate-500 truncate max-w-2xl" title="{{ s.reasoning }}">{{ s.reasoning }}</p>
+        {% endif %}
+      </div>
+
+      <!-- Actions -->
+      <div class="flex-shrink-0 self-center">
+        <a href="/document/{{ doc.id }}" class="btn-ghost text-xs">Bearbeiten</a>
+      </div>
+
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+
+<!-- Empty state -->
+<div class="text-center py-20 animate-in">
+  <div class="text-5xl mb-4 opacity-60">📋</div>
+  <p class="text-lg font-mono font-semibold text-slate-300 mb-2">Keine Vorschläge</p>
+  <p class="text-sm text-slate-500 mb-6">Es liegen keine klassifizierten Dokumente zur Prüfung vor.</p>
+  <a href="/" class="btn-neon text-sm">Batch-Klassifizierung starten</a>
+</div>
+
+{% endif %}
+
 {% endblock %}

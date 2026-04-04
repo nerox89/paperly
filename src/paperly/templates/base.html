@@ -1,26 +1,421 @@
 <!DOCTYPE html>
-<html lang="de" class="h-full bg-gray-50">
+<html lang="de" class="h-full">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}paperly{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=JetBrains+Mono:wght@300..700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+          },
+          colors: {
+            surface: {
+              DEFAULT: 'rgba(15, 23, 42, 0.6)',
+              solid: '#0f172a',
+              hover: 'rgba(15, 23, 42, 0.8)',
+            },
+            neon: {
+              cyan: '#22d3ee',
+              violet: '#a78bfa',
+            },
+          },
+          animation: {
+            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'glow': 'glow 2s ease-in-out infinite alternate',
+          },
+          keyframes: {
+            glow: {
+              '0%': { boxShadow: '0 0 5px rgba(34, 211, 238, 0.2), 0 0 10px rgba(34, 211, 238, 0.1)' },
+              '100%': { boxShadow: '0 0 10px rgba(34, 211, 238, 0.4), 0 0 20px rgba(34, 211, 238, 0.2)' },
+            },
+          },
+        },
+      },
+    }
+  </script>
+
+  <!-- Custom styles -->
+  <style>
+    :root {
+      --bg-primary: #0a0f1a;
+      --bg-secondary: #111827;
+      --glass-bg: rgba(15, 23, 42, 0.6);
+      --glass-border: rgba(255, 255, 255, 0.06);
+      --neon-cyan: #22d3ee;
+      --neon-violet: #a78bfa;
+    }
+
+    body {
+      background: var(--bg-primary);
+      font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+      color: #e2e8f0;
+    }
+
+    /* Noise overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0.03;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px 256px;
+    }
+
+    /* Glass card */
+    .glass {
+      background: var(--glass-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--glass-border);
+      border-radius: 0.75rem;
+    }
+    .glass-sm {
+      background: var(--glass-bg);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--glass-border);
+      border-radius: 0.5rem;
+    }
+    .glass:hover {
+      border-color: rgba(34, 211, 238, 0.1);
+    }
+
+    /* Neon glow effect for buttons */
+    .btn-neon {
+      background: linear-gradient(135deg, #0891b2, #06b6d4);
+      color: #fff;
+      font-weight: 500;
+      padding: 0.5rem 1.25rem;
+      border-radius: 0.5rem;
+      transition: all 0.2s ease;
+      box-shadow: 0 0 10px rgba(34, 211, 238, 0.15);
+    }
+    .btn-neon:hover {
+      box-shadow: 0 0 20px rgba(34, 211, 238, 0.35), 0 0 40px rgba(34, 211, 238, 0.1);
+      transform: translateY(-1px);
+    }
+    .btn-neon:active {
+      transform: translateY(0);
+    }
+
+    /* Neon violet button */
+    .btn-violet {
+      background: linear-gradient(135deg, #7c3aed, #8b5cf6);
+      color: #fff;
+      font-weight: 500;
+      padding: 0.5rem 1.25rem;
+      border-radius: 0.5rem;
+      transition: all 0.2s ease;
+      box-shadow: 0 0 10px rgba(139, 92, 246, 0.15);
+    }
+    .btn-violet:hover {
+      box-shadow: 0 0 20px rgba(139, 92, 246, 0.35), 0 0 40px rgba(139, 92, 246, 0.1);
+      transform: translateY(-1px);
+    }
+
+    /* Ghost button */
+    .btn-ghost {
+      background: transparent;
+      color: #94a3b8;
+      font-weight: 500;
+      padding: 0.5rem 1.25rem;
+      border-radius: 0.5rem;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      transition: all 0.2s ease;
+    }
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: #e2e8f0;
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Danger button */
+    .btn-danger {
+      background: transparent;
+      color: #f43f5e;
+      font-weight: 500;
+      padding: 0.5rem 1.25rem;
+      border-radius: 0.5rem;
+      border: 1px solid rgba(244, 63, 94, 0.2);
+      transition: all 0.2s ease;
+    }
+    .btn-danger:hover {
+      background: rgba(244, 63, 94, 0.1);
+      box-shadow: 0 0 15px rgba(244, 63, 94, 0.15);
+    }
+
+    /* Dark form inputs */
+    .input-dark {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 0.5rem;
+      color: #e2e8f0;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.875rem;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      width: 100%;
+    }
+    .input-dark:focus {
+      outline: none;
+      border-color: rgba(34, 211, 238, 0.5);
+      box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.1);
+    }
+    .input-dark::placeholder {
+      color: #475569;
+    }
+    select.input-dark {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.75rem center;
+      padding-right: 2.5rem;
+    }
+    select.input-dark option {
+      background: #1e293b;
+      color: #e2e8f0;
+    }
+
+    /* Tag chips */
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.25rem 0.625rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.05);
+      color: #cbd5e1;
+      transition: all 0.15s ease;
+    }
+    .chip-cyan {
+      border-color: rgba(34, 211, 238, 0.3);
+      color: #22d3ee;
+      background: rgba(34, 211, 238, 0.08);
+    }
+    .chip-violet {
+      border-color: rgba(167, 139, 250, 0.3);
+      color: #a78bfa;
+      background: rgba(167, 139, 250, 0.08);
+    }
+    .chip-green {
+      border-color: rgba(16, 185, 129, 0.3);
+      color: #10b981;
+      background: rgba(16, 185, 129, 0.08);
+    }
+    .chip-amber {
+      border-color: rgba(245, 158, 11, 0.3);
+      color: #f59e0b;
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .chip-rose {
+      border-color: rgba(244, 63, 94, 0.3);
+      color: #f43f5e;
+      background: rgba(244, 63, 94, 0.08);
+    }
+
+    /* Confidence ring */
+    .confidence-ring {
+      --progress: 0;
+      --color: #22d3ee;
+    }
+    .confidence-ring circle.track {
+      stroke: rgba(255, 255, 255, 0.06);
+    }
+    .confidence-ring circle.fill {
+      stroke: var(--color);
+      stroke-dasharray: calc(var(--progress) * 188.5) 188.5;
+      transform: rotate(-90deg);
+      transform-origin: center;
+      transition: stroke-dasharray 0.8s ease;
+      filter: drop-shadow(0 0 4px var(--color));
+    }
+
+    /* Neon progress bar */
+    .progress-neon {
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+    .progress-neon .fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #0891b2, #22d3ee);
+      box-shadow: 0 0 10px rgba(34, 211, 238, 0.4);
+      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Keyboard shortcut badges */
+    kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1.5rem;
+      height: 1.5rem;
+      padding: 0 0.375rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.6875rem;
+      font-weight: 500;
+      color: #94a3b8;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 0.25rem;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* GSAP animation helpers */
+    .animate-in {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+      .animate-in { opacity: 1; transform: none; }
+    }
+  </style>
+
+  <!-- HTMX -->
   <script src="/static/htmx.min.js"></script>
+
+  <!-- GSAP -->
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
 </head>
-<body class="h-full">
-  <nav class="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-6">
-    <a href="/" class="text-lg font-semibold text-gray-900">📄 paperly</a>
-    <a href="/" class="text-sm text-gray-500 hover:text-gray-900">Inbox</a>
-    <a href="/review" class="text-sm text-gray-500 hover:text-gray-900">Prüfen</a>
-    <a href="/cleanup" class="text-sm text-gray-500 hover:text-gray-900">Aufräumen</a>
-    <a href="/history" class="text-sm text-gray-500 hover:text-gray-900">Verlauf</a>
-    <span class="ml-auto text-xs text-gray-400" id="stats-badge"
-          hx-get="/stats" hx-trigger="load" hx-swap="innerHTML">
-    </span>
+<body class="h-full font-sans antialiased">
+  <!-- Navigation -->
+  <nav id="main-nav" class="fixed top-0 left-0 right-0 z-50 transition-transform duration-300"
+       style="background: rgba(10, 15, 26, 0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid rgba(255,255,255,0.06);">
+    <div class="max-w-7xl mx-auto px-6 h-14 flex items-center gap-8">
+      <!-- Logo -->
+      <a href="/" class="flex items-center gap-2 group">
+        <span class="text-cyan-400 text-xl transition-all duration-300 group-hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.6)]">📄</span>
+        <span class="font-mono font-semibold text-slate-100 tracking-tight">paperly</span>
+      </a>
+
+      <!-- Nav links -->
+      <div class="flex items-center gap-1">
+        {% set nav_items = [
+          ('/', 'Inbox', 'inbox'),
+          ('/review', 'Prüfen', 'review'),
+          ('/cleanup', 'Aufräumen', 'cleanup'),
+          ('/history', 'Verlauf', 'history'),
+        ] %}
+        {% for href, label, key in nav_items %}
+        <a href="{{ href }}"
+           class="relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors duration-200
+                  {% if request.url.path == href or (href != '/' and request.url.path.startswith(href)) %}
+                    text-cyan-400 bg-cyan-500/10
+                  {% else %}
+                    text-slate-400 hover:text-slate-200 hover:bg-white/5
+                  {% endif %}">
+          {{ label }}
+        </a>
+        {% endfor %}
+      </div>
+
+      <!-- Stats badge -->
+      <div class="ml-auto flex items-center gap-3">
+        <span class="text-xs font-mono text-slate-500" id="stats-badge"
+              hx-get="/stats" hx-trigger="load" hx-swap="innerHTML">
+        </span>
+        <span class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-40"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+        </span>
+      </div>
+    </div>
   </nav>
-  <main class="{% block main_class %}p-6{% endblock %}">
-    {% block content %}{% endblock %}
+
+  <!-- Main content (offset for fixed nav) -->
+  <main class="pt-14 {% block main_class %}{% endblock %}">
+    <div class="{% block container_class %}max-w-7xl mx-auto px-6 py-8{% endblock %}">
+      {% block content %}{% endblock %}
+    </div>
   </main>
+
+  <!-- Scroll-reactive nav script -->
+  <script>
+    (function() {
+      const nav = document.getElementById('main-nav');
+      let lastY = 0;
+      const mq = window.matchMedia('(prefers-reduced-motion: no-preference)');
+
+      window.addEventListener('scroll', () => {
+        const y = window.scrollY;
+        if (y > 60 && y > lastY) {
+          nav.style.transform = 'translateY(-100%)';
+        } else {
+          nav.style.transform = 'translateY(0)';
+        }
+        lastY = y;
+      }, { passive: true });
+
+      // GSAP entrance animations
+      if (mq.matches && typeof gsap !== 'undefined') {
+        document.addEventListener('DOMContentLoaded', () => {
+          gsap.utils.toArray('.animate-in').forEach((el, i) => {
+            gsap.to(el, {
+              opacity: 1,
+              y: 0,
+              duration: 0.5,
+              delay: i * 0.05,
+              ease: 'power2.out',
+            });
+          });
+        });
+
+        // Re-run on HTMX swaps
+        document.body.addEventListener('htmx:afterSwap', (e) => {
+          const els = e.detail.target.querySelectorAll('.animate-in');
+          gsap.utils.toArray(els).forEach((el, i) => {
+            gsap.fromTo(el,
+              { opacity: 0, y: 20 },
+              { opacity: 1, y: 0, duration: 0.4, delay: i * 0.04, ease: 'power2.out' }
+            );
+          });
+        });
+      }
+    })();
+  </script>
+
   {% block scripts %}{% endblock %}
 </body>
 </html>

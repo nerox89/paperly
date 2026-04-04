@@ -1,85 +1,87 @@
 {% extends "base.html" %}
 
-{% block title %}Taxonomie aufräumen — paperly{% endblock %}
+{% block title %}Aufräumen — paperly{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto">
+<div class="max-w-6xl mx-auto">
 
-  <div class="mb-6">
-    <h1 class="text-xl font-semibold text-gray-900 mb-1">Taxonomie aufräumen</h1>
-    <p class="text-sm text-gray-500">Duplikate zusammenführen und verwaiste Einträge löschen.</p>
+  <!-- Header -->
+  <div class="mb-8 animate-in">
+    <h1 class="text-2xl font-mono font-bold text-slate-100 tracking-tight mb-1">Aufräumen</h1>
+    <p class="text-sm text-slate-400">Duplikate zusammenführen und verwaiste Einträge löschen.</p>
   </div>
 
   {% if not merge_actions and not delete_actions %}
-  <div class="text-center py-16 text-gray-500">
+  <!-- Empty state -->
+  <div class="glass text-center py-16 px-6 animate-in">
     <p class="text-4xl mb-3">✅</p>
-    <p class="text-lg font-medium">Alles sauber!</p>
-    <p class="text-sm mt-1">Keine Duplikate oder verwaisten Einträge gefunden.</p>
+    <p class="text-lg font-medium text-slate-200">Alles sauber!</p>
+    <p class="text-sm text-slate-500 mt-1">Keine Duplikate oder verwaisten Einträge gefunden.</p>
   </div>
 
   {% else %}
 
-  <div id="cleanup-results"></div>
+  <div id="cleanup-results" class="mb-6"></div>
 
-  <!-- Merge actions -->
-  {% if merge_actions %}
-  <div class="mb-6">
-    <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
-      Zusammenführungen ({{ merge_actions|length }})
-    </h2>
-    <div class="space-y-2">
-      {% for a in merge_actions %}
-      <div class="flex items-center gap-3 bg-white rounded-lg border border-gray-200 px-4 py-3">
-        <span class="text-xs px-2 py-0.5 rounded-full
-          {% if a.kind == 'document_type' %}bg-purple-100 text-purple-700
-          {% else %}bg-blue-100 text-blue-700{% endif %}">
-          {% if a.kind == 'document_type' %}Dokumenttyp{% else %}Korrespondent{% endif %}
-        </span>
-        <span class="text-sm text-red-600 line-through">{{ a.remove_name }}</span>
-        <span class="text-xs text-gray-400">→</span>
-        <span class="text-sm text-green-700 font-medium">{{ a.keep_name }}</span>
-        <span class="ml-auto text-xs text-gray-400">{{ a.doc_count }} Dok.</span>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-  <!-- Delete actions -->
-  {% if delete_actions %}
-  <div class="mb-6">
-    <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
-      Löschungen ({{ delete_actions|length }})
-    </h2>
-    <div class="space-y-2">
-      {% for d in delete_actions %}
-      <div class="flex items-center gap-3 bg-white rounded-lg border border-gray-200 px-4 py-3">
-        <span class="text-xs px-2 py-0.5 rounded-full
-          {% if d.kind == 'document_type' %}bg-purple-100 text-purple-700
-          {% else %}bg-blue-100 text-blue-700{% endif %}">
-          {% if d.kind == 'document_type' %}Dokumenttyp{% else %}Korrespondent{% endif %}
-        </span>
-        <span class="text-sm text-gray-600">{{ d.name }}</span>
-        <span class="ml-auto text-xs text-gray-400">0 Dok.</span>
+    <!-- Merge actions -->
+    {% if merge_actions %}
+    <div>
+      <h2 class="text-xs font-mono font-semibold text-slate-500 uppercase tracking-widest mb-3 animate-in">
+        Zusammenführungen <span class="chip chip-cyan ml-2">{{ merge_actions|length }}</span>
+      </h2>
+      <div class="space-y-2">
+        {% for a in merge_actions %}
+        <div class="glass-sm px-4 py-3 flex items-center gap-3 animate-in">
+          <span class="chip {% if a.kind == 'document_type' %}chip-cyan{% else %}chip-violet{% endif %} flex-shrink-0">
+            {% if a.kind == 'document_type' %}Dokumenttyp{% else %}Korrespondent{% endif %}
+          </span>
+          <div class="flex items-center gap-2 min-w-0 flex-1">
+            <span class="text-sm text-rose-400 line-through truncate">{{ a.remove_name }}</span>
+            <span class="text-slate-600 flex-shrink-0">→</span>
+            <span class="text-sm text-emerald-400 font-medium truncate">{{ a.keep_name }}</span>
+          </div>
+          <span class="text-xs font-mono text-slate-500 flex-shrink-0">{{ a.document_count }} Dok.</span>
+        </div>
+        {% endfor %}
       </div>
-      {% endfor %}
     </div>
+    {% endif %}
+
+    <!-- Delete actions -->
+    {% if delete_actions %}
+    <div>
+      <h2 class="text-xs font-mono font-semibold text-slate-500 uppercase tracking-widest mb-3 animate-in">
+        Löschungen <span class="chip chip-rose ml-2">{{ delete_actions|length }}</span>
+      </h2>
+      <div class="space-y-2">
+        {% for d in delete_actions %}
+        <div class="glass-sm px-4 py-3 flex items-center gap-3 animate-in">
+          <span class="chip {% if d.kind == 'document_type' %}chip-cyan{% else %}chip-violet{% endif %} flex-shrink-0">
+            {% if d.kind == 'document_type' %}Dokumenttyp{% else %}Korrespondent{% endif %}
+          </span>
+          <span class="text-sm text-slate-300 truncate flex-1" style="border-left: 2px solid rgba(244, 63, 94, 0.4); padding-left: 0.5rem;">{{ d.name }}</span>
+          <span class="text-xs font-mono text-slate-600 flex-shrink-0">0 Dok.</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
   </div>
-  {% endif %}
 
   <!-- Execute button -->
-  <div class="flex gap-3 pt-4 border-t border-gray-200">
+  <div class="flex items-center gap-3 mt-8 pt-6 border-t border-white/5 animate-in">
     <button hx-post="/cleanup/execute"
             hx-target="#cleanup-results"
             hx-swap="innerHTML"
             hx-confirm="Alle Änderungen durchführen? Dies kann nicht rückgängig gemacht werden."
-            class="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors">
+            class="btn-danger"
+            style="box-shadow: 0 0 20px rgba(245, 158, 11, 0.1);">
       🔧 Aufräumen durchführen
     </button>
-    <a href="/"
-       class="px-4 py-2.5 text-sm text-gray-500 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-      Abbrechen
-    </a>
+    <a href="/" class="btn-ghost">Abbrechen</a>
   </div>
 
   {% endif %}

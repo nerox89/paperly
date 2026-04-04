@@ -3,59 +3,81 @@
 {% block title %}Verlauf — paperly{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto">
+<div class="max-w-3xl mx-auto">
 
-  <div class="mb-6 flex items-center justify-between">
-    <div>
-      <h1 class="text-xl font-semibold text-gray-900 mb-1">Verarbeitungsverlauf</h1>
-      <p class="text-sm text-gray-500">Letzte Aktionen an Dokumenten.</p>
-    </div>
+  <!-- Header -->
+  <div class="mb-8 animate-in">
+    <h1 class="text-2xl font-mono font-bold text-slate-100 tracking-tight mb-1">Verlauf</h1>
+    <p class="text-sm text-slate-400">Letzte Aktionen an Dokumenten.</p>
   </div>
 
   {% if entries %}
-  <div class="space-y-2">
-    {% for e in entries %}
-    <div class="flex items-center gap-4 bg-white rounded-lg border border-gray-200 px-4 py-3">
-      <!-- Action badge -->
-      <span class="text-xs px-2 py-0.5 rounded-full font-medium
-        {% if e.action == 'apply' %}bg-green-100 text-green-700
-        {% elif e.action == 'skip' %}bg-gray-100 text-gray-600
-        {% elif e.action == 'delete' %}bg-red-100 text-red-600
-        {% else %}bg-blue-100 text-blue-700{% endif %}">
-        {% if e.action == 'apply' %}✓ Übernommen
-        {% elif e.action == 'skip' %}⏭ Übersprungen
-        {% elif e.action == 'delete' %}🗑 Gelöscht
-        {% else %}{{ e.action }}{% endif %}
-      </span>
+  <!-- Timeline -->
+  <div class="relative pl-8">
+    <!-- Vertical timeline line -->
+    <div class="absolute left-3 top-0 bottom-0 w-px" style="background: rgba(34, 211, 238, 0.1);"></div>
 
-      <!-- Doc info -->
-      <div class="flex-1 min-w-0">
-        <p class="text-sm text-gray-900 truncate">
-          Dokument #{{ e.doc_id }}
-          {% if e.new_values and e.new_values.title %}
-            — {{ e.new_values.title }}
-          {% endif %}
-        </p>
-        {% if e.action == 'apply' and e.old_values and e.new_values %}
-        <p class="text-xs text-gray-400 mt-0.5 truncate">
-          {% if e.old_values.title != e.new_values.title %}
-            Titel: {{ e.old_values.title[:30] }} → {{ e.new_values.title[:30] }}
-          {% endif %}
-        </p>
-        {% endif %}
+    <div class="space-y-3">
+      {% for e in entries %}
+      <div class="relative animate-in">
+        <!-- Timeline dot -->
+        <div class="absolute -left-5 top-4 w-2.5 h-2.5 rounded-full ring-2 ring-[#0a0f1a]
+          {% if e.action in ['apply', 'auto_apply'] %}bg-emerald-400
+          {% elif e.action == 'delete' %}bg-rose-400
+          {% else %}bg-slate-500{% endif %}">
+        </div>
+
+        <!-- Entry card -->
+        <div class="glass-sm px-4 py-3">
+          <div class="flex items-start gap-3">
+            <!-- Action badge -->
+            <span class="chip flex-shrink-0
+              {% if e.action == 'apply' %}chip-green
+              {% elif e.action == 'auto_apply' %}chip-cyan
+              {% elif e.action == 'delete' %}chip-rose
+              {% else %}{% endif %}">
+              {% if e.action == 'apply' %}✓ Übernommen
+              {% elif e.action == 'auto_apply' %}⚡ Auto
+              {% elif e.action == 'skip' %}⏭ Übersprungen
+              {% elif e.action == 'delete' %}🗑 Gelöscht
+              {% else %}{{ e.action }}{% endif %}
+            </span>
+
+            <!-- Doc info -->
+            <div class="flex-1 min-w-0">
+              <p class="text-sm text-slate-200 truncate">
+                <span class="font-mono text-slate-500">#{{ e.doc_id }}</span>
+                {% if e.new_values and e.new_values.title %}
+                  <span class="text-slate-600 mx-1">—</span>
+                  <span class="text-slate-300">{{ e.new_values.title }}</span>
+                {% endif %}
+              </p>
+              {% if e.action in ['apply', 'auto_apply'] and e.old_values and e.new_values %}
+              {% if e.old_values.title != e.new_values.title %}
+              <p class="text-xs text-slate-500 mt-1 truncate">
+                <span class="line-through text-slate-600">{{ e.old_values.title[:40] }}</span>
+                <span class="text-slate-700 mx-1">→</span>
+                <span class="text-emerald-400/70">{{ e.new_values.title[:40] }}</span>
+              </p>
+              {% endif %}
+              {% endif %}
+            </div>
+
+            <!-- Timestamp -->
+            <span class="text-xs font-mono text-slate-600 flex-shrink-0 pt-0.5">{{ e.created_at }}</span>
+          </div>
+        </div>
       </div>
-
-      <!-- Timestamp -->
-      <span class="text-xs text-gray-400 flex-shrink-0">{{ e.created_at }}</span>
+      {% endfor %}
     </div>
-    {% endfor %}
   </div>
 
   {% else %}
-  <div class="text-center py-16 text-gray-500">
+  <!-- Empty state -->
+  <div class="glass text-center py-16 px-6 animate-in">
     <p class="text-4xl mb-3">📋</p>
-    <p class="text-lg font-medium">Noch keine Aktionen</p>
-    <p class="text-sm mt-1">Hier erscheinen verarbeitete Dokumente.</p>
+    <p class="text-lg font-medium text-slate-200">Noch keine Aktionen</p>
+    <p class="text-sm text-slate-500 mt-1">Hier erscheinen verarbeitete Dokumente.</p>
   </div>
   {% endif %}
 
