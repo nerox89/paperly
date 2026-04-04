@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -27,6 +28,12 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+BATCH_CONCURRENCY = int(os.environ.get("PAPERLY_BATCH_CONCURRENCY", "3"))
+AUTO_APPLY_MIN_CONFIDENCE = float(os.environ.get("PAPERLY_AUTO_APPLY_CONFIDENCE", "0.85"))
+
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
 # ---------------------------------------------------------------------------
 # App state (loaded at startup, refreshed on demand)
 # ---------------------------------------------------------------------------
@@ -36,9 +43,17 @@ class AppState:
     classifier: Classifier
     taxonomy: Taxonomy
     db: Database
+    # Batch classification state
+    batch_running: bool
+    batch_total: int
+    batch_done: int
+    batch_errors: int
 
     def __init__(self) -> None:
-        pass
+        self.batch_running = False
+        self.batch_total = 0
+        self.batch_done = 0
+        self.batch_errors = 0
 
 
 state = AppState()
@@ -108,6 +123,11 @@ async def index(request: Request, page: int = 1):
             "page": page,
             "page_size": 25,
             "taxonomy": state.taxonomy,
+            "running": state.batch_running,
+            "batch_total": state.batch_total,
+            "batch_done": state.batch_done,
+            "batch_errors": state.batch_errors,
+            "cached_count": state.db.suggestion_count(),
         },
     )
 
@@ -137,7 +157,9 @@ async def classify_document(request: Request, doc_id: int):
         doc = await state.paperless.get_document(doc_id)
         try:
             suggestion = await state.classifier.classify(
-                doc.content, state.taxonomy, original_title=doc.title
+                doc.content, state.taxonomy,
+                original_title=doc.title,
+                filename=doc.original_file_name or "",
             )
         except Exception as e:
             logger.error("Classification failed for doc %d: %s", doc_id, e)
@@ -173,6 +195,7 @@ async def apply_document(
     storage_path_id: Annotated[str, Form()] = "",
     tag_ids: Annotated[list[str], Form()] = [],
     tag_new: Annotated[str, Form()] = "",
+    new_tag_names: Annotated[list[str], Form()] = [],
 ):
     """Apply chosen metadata and remove INBOX tag."""
     # Capture old values for audit log
@@ -209,11 +232,18 @@ async def apply_document(
     if storage_path_id:
         sp_id = int(storage_path_id)
 
-    # Resolve tags — create new tag if provided
+    # Resolve tags — create new tags if provided
     chosen_tags = [int(t) for t in tag_ids if t]
     if tag_new.strip():
         new_tag = await state.paperless.create_tag(tag_new.strip())
         chosen_tags.append(new_tag.id)
+        state.taxonomy = await state.paperless.get_taxonomy()
+    # Create AI-suggested new tags
+    for new_name in new_tag_names:
+        if new_name.strip():
+            new_tag = await state.paperless.create_tag(new_name.strip())
+            chosen_tags.append(new_tag.id)
+    if new_tag_names:
         state.taxonomy = await state.paperless.get_taxonomy()
 
     # Remove INBOX tag
@@ -294,6 +324,244 @@ async def stats():
 async def refresh_taxonomy():
     state.taxonomy = await state.paperless.get_taxonomy()
     return {"status": "ok", "correspondents": len(state.taxonomy.correspondents)}
+
+
+# ---------------------------------------------------------------------------
+# Batch classification
+# ---------------------------------------------------------------------------
+
+async def _classify_one(doc: Document) -> tuple[int, ClassificationResult | None]:
+    """Classify a single document, returning (doc_id, result_or_none)."""
+    if state.db.get_suggestion(doc.id) is not None:
+        return doc.id, state.db.get_suggestion(doc.id)
+    try:
+        result = await state.classifier.classify(
+            doc.content, state.taxonomy,
+            original_title=doc.title,
+            filename=doc.original_file_name or "",
+        )
+        state.db.set_suggestion(doc.id, result)
+        return doc.id, result
+    except Exception as e:
+        logger.error("Batch classify failed for doc %d: %s", doc.id, e)
+        return doc.id, None
+
+
+async def _run_batch(doc_ids: list[int]) -> None:
+    """Background task: classify documents with concurrency limit."""
+    state.batch_running = True
+    state.batch_total = len(doc_ids)
+    state.batch_done = 0
+    state.batch_errors = 0
+
+    sem = asyncio.Semaphore(BATCH_CONCURRENCY)
+
+    async def _worker(doc_id: int) -> None:
+        async with sem:
+            doc = await state.paperless.get_document(doc_id)
+            _, result = await _classify_one(doc)
+            if result is None:
+                state.batch_errors += 1
+            state.batch_done += 1
+
+    tasks = [asyncio.create_task(_worker(did)) for did in doc_ids]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    state.batch_running = False
+    logger.info("Batch complete: %d/%d done, %d errors", state.batch_done, state.batch_total, state.batch_errors)
+
+
+@app.post("/batch/start")
+async def batch_start(request: Request):
+    """Start batch classification for all inbox documents (or remaining unclassified ones)."""
+    if state.batch_running:
+        return JSONResponse({"status": "already_running", "done": state.batch_done, "total": state.batch_total})
+
+    if not state.taxonomy.inbox_tag_id:
+        raise HTTPException(500, "INBOX tag not found")
+
+    # Fetch all inbox doc IDs (paginate through all pages)
+    all_doc_ids: list[int] = []
+    page = 1
+    while True:
+        docs, total = await state.paperless.get_inbox_documents(
+            state.taxonomy.inbox_tag_id, page=page, page_size=100
+        )
+        all_doc_ids.extend(d.id for d in docs)
+        if page * 100 >= total:
+            break
+        page += 1
+
+    # Filter out already-cached
+    uncached = [did for did in all_doc_ids if state.db.get_suggestion(did) is None]
+
+    if not uncached:
+        return JSONResponse({"status": "nothing_to_do", "cached": len(all_doc_ids)})
+
+    asyncio.create_task(_run_batch(uncached))
+    return JSONResponse({"status": "started", "total": len(uncached), "already_cached": len(all_doc_ids) - len(uncached)})
+
+
+@app.get("/batch/status")
+async def batch_status():
+    """Return current batch classification progress."""
+    return JSONResponse({
+        "running": state.batch_running,
+        "total": state.batch_total,
+        "done": state.batch_done,
+        "errors": state.batch_errors,
+    })
+
+
+@app.get("/batch/progress", response_class=HTMLResponse)
+async def batch_progress(request: Request):
+    """HTMX partial: batch progress bar."""
+    return templates.TemplateResponse(
+        "partials/batch_progress.html",
+        {
+            "request": request,
+            "running": state.batch_running,
+            "total": state.batch_total,
+            "done": state.batch_done,
+            "errors": state.batch_errors,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Batch review
+# ---------------------------------------------------------------------------
+
+@app.get("/review", response_class=HTMLResponse)
+async def review_list(request: Request, min_conf: float = 0.0, max_conf: float = 1.0, sort: str = "confidence"):
+    """Show all cached suggestions for review."""
+    if not state.taxonomy.inbox_tag_id:
+        raise HTTPException(500, "INBOX tag not found")
+
+    # Get all inbox docs (paginate)
+    all_docs: list[Document] = []
+    page = 1
+    while True:
+        docs, total = await state.paperless.get_inbox_documents(
+            state.taxonomy.inbox_tag_id, page=page, page_size=100
+        )
+        all_docs.extend(docs)
+        if page * 100 >= total:
+            break
+        page += 1
+
+    # Match with cached suggestions
+    items: list[dict] = []
+    for doc in all_docs:
+        suggestion = state.db.get_suggestion(doc.id)
+        if suggestion is None:
+            continue
+        if suggestion.confidence < min_conf or suggestion.confidence > max_conf:
+            continue
+        items.append({
+            "doc": doc,
+            "suggestion": suggestion,
+            "correspondent_name": (
+                state.taxonomy.correspondent_by_id(suggestion.correspondent_id).name
+                if suggestion.correspondent_id and state.taxonomy.correspondent_by_id(suggestion.correspondent_id)
+                else suggestion.correspondent_name or "–"
+            ),
+            "document_type_name": (
+                state.taxonomy.document_type_by_id(suggestion.document_type_id).name
+                if suggestion.document_type_id and state.taxonomy.document_type_by_id(suggestion.document_type_id)
+                else "–"
+            ),
+            "tag_names": [
+                state.taxonomy.tag_by_id(tid).name
+                for tid in suggestion.tag_ids
+                if state.taxonomy.tag_by_id(tid)
+            ],
+        })
+
+    # Sort
+    if sort == "confidence":
+        items.sort(key=lambda x: x["suggestion"].confidence)
+    elif sort == "confidence_desc":
+        items.sort(key=lambda x: x["suggestion"].confidence, reverse=True)
+    elif sort == "title":
+        items.sort(key=lambda x: x["suggestion"].title.lower())
+
+    return templates.TemplateResponse(
+        "review.html",
+        {
+            "request": request,
+            "items": items,
+            "total_inbox": len(all_docs),
+            "total_cached": len(items),
+            "min_conf": min_conf,
+            "max_conf": max_conf,
+            "sort": sort,
+            "taxonomy": state.taxonomy,
+            "auto_apply_threshold": AUTO_APPLY_MIN_CONFIDENCE,
+        },
+    )
+
+
+@app.post("/review/apply-all")
+async def review_apply_all(request: Request, min_confidence: Annotated[float, Form()] = 0.85):
+    """Apply all suggestions above the confidence threshold."""
+    if not state.taxonomy.inbox_tag_id:
+        raise HTTPException(500, "INBOX tag not found")
+
+    # Get all inbox docs
+    all_docs: list[Document] = []
+    page = 1
+    while True:
+        docs, total = await state.paperless.get_inbox_documents(
+            state.taxonomy.inbox_tag_id, page=page, page_size=100
+        )
+        all_docs.extend(docs)
+        if page * 100 >= total:
+            break
+        page += 1
+
+    applied = 0
+    skipped = 0
+    errors = 0
+
+    for doc in all_docs:
+        suggestion = state.db.get_suggestion(doc.id)
+        if suggestion is None or suggestion.confidence < min_confidence:
+            skipped += 1
+            continue
+
+        try:
+            # Build tag list without INBOX
+            tags = [tid for tid in suggestion.tag_ids if tid != state.taxonomy.inbox_tag_id]
+
+            await state.paperless.update_document(
+                doc.id,
+                title=suggestion.title,
+                created=suggestion.created,
+                correspondent=suggestion.correspondent_id,
+                document_type=suggestion.document_type_id,
+                tags=tags,
+            )
+            state.db.log_action(
+                doc.id, "auto_apply",
+                old_values={"title": doc.title, "tags": doc.tags},
+                new_values={
+                    "title": suggestion.title,
+                    "correspondent": suggestion.correspondent_id,
+                    "document_type": suggestion.document_type_id,
+                    "tags": tags,
+                    "confidence": suggestion.confidence,
+                },
+            )
+            state.db.clear_suggestion(doc.id)
+            applied += 1
+        except Exception as e:
+            logger.error("Auto-apply failed for doc %d: %s", doc.id, e)
+            errors += 1
+
+    return templates.TemplateResponse(
+        "partials/apply_all_results.html",
+        {"request": request, "applied": applied, "skipped": skipped, "errors": errors},
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -134,6 +134,19 @@
         {% endif %}
       {% endfor %}
     </div>
+    {% if suggestion.new_tags %}
+    <!-- AI-suggested new tags -->
+    <div class="flex flex-wrap gap-2 mb-2">
+      <span class="text-xs text-amber-600 font-medium self-center">Neu vorgeschlagen:</span>
+      {% for new_tag in suggestion.new_tags %}
+      <label class="inline-flex items-center gap-1.5 cursor-pointer select-none group">
+        <input type="checkbox" name="new_tag_names" value="{{ new_tag }}" checked
+               class="rounded border-amber-400 text-amber-600 focus:ring-amber-500">
+        <span class="text-sm text-amber-700 group-hover:text-amber-800 font-medium transition-colors">{{ new_tag }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    {% endif %}
     <!-- New tag inline -->
     <div class="flex gap-2 items-center">
       <input type="text" name="tag_new" id="tag-new-input"

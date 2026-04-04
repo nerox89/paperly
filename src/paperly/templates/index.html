@@ -5,6 +5,11 @@
 {% block content %}
 <div class="max-w-4xl mx-auto">
 
+  <!-- Batch progress area -->
+  <div id="batch-area" class="mb-4">
+    {% include "partials/batch_progress.html" %}
+  </div>
+
   <!-- Progress bar -->
   <div class="mb-6">
     <div class="flex justify-between text-sm text-gray-600 mb-1">
@@ -18,6 +23,25 @@
     </div>
     <p class="text-xs text-gray-400 mt-1">{{ pct }}% verarbeitet</p>
   </div>
+
+  <!-- Action bar -->
+  {% if docs %}
+  <div class="flex items-center gap-3 mb-4">
+    <button hx-post="/batch/start"
+            hx-target="#batch-area"
+            hx-swap="innerHTML"
+            hx-on::after-request="setTimeout(() => { const el = document.getElementById('batch-area'); if (el) htmx.ajax('GET', '/batch/progress', {target: '#batch-area', swap: 'innerHTML'}); }, 500)"
+            class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
+      🤖 Alle klassifizieren
+    </button>
+    {% if cached_count > 0 %}
+    <a href="/review"
+       class="px-4 py-2 text-sm text-blue-600 border border-blue-300 rounded-lg hover:bg-blue-50 transition-colors font-medium">
+      📋 {{ cached_count }} Vorschläge prüfen
+    </a>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <!-- Document list -->
   {% if docs %}
