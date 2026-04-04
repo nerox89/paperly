@@ -113,9 +113,9 @@ async def index(request: Request, page: int = 1):
     processed = total_docs - total  # rough estimate
 
     return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
+            request,
+            "index.html",
+            {
             "docs": docs,
             "total": total,
             "total_docs": total_docs,
@@ -137,9 +137,9 @@ async def document_view(request: Request, doc_id: int):
     doc = await state.paperless.get_document(doc_id)
     suggestion = state.db.get_suggestion(doc_id)
     return templates.TemplateResponse(
-        "document.html",
-        {
-            "request": request,
+            request,
+            "document.html",
+            {
             "doc": doc,
             "suggestion": suggestion,
             "taxonomy": state.taxonomy,
@@ -164,17 +164,18 @@ async def classify_document(request: Request, doc_id: int):
         except Exception as e:
             logger.error("Classification failed for doc %d: %s", doc_id, e)
             return templates.TemplateResponse(
-                "partials/error.html",
-                {"request": request, "error": f"Klassifizierung fehlgeschlagen: {e}"},
+            request,
+            "partials/error.html",
+            {"error": f"Klassifizierung fehlgeschlagen: {e}"},
             )
         state.db.set_suggestion(doc_id, suggestion)
 
     suggestion = state.db.get_suggestion(doc_id)
     doc = await state.paperless.get_document(doc_id)
     return templates.TemplateResponse(
-        "partials/suggestion.html",
-        {
-            "request": request,
+            request,
+            "partials/suggestion.html",
+            {
             "doc": doc,
             "suggestion": suggestion,
             "taxonomy": state.taxonomy,
@@ -416,9 +417,9 @@ async def batch_status():
 async def batch_progress(request: Request):
     """HTMX partial: batch progress bar."""
     return templates.TemplateResponse(
-        "partials/batch_progress.html",
-        {
-            "request": request,
+            request,
+            "partials/batch_progress.html",
+            {
             "running": state.batch_running,
             "total": state.batch_total,
             "done": state.batch_done,
@@ -486,9 +487,9 @@ async def review_list(request: Request, min_conf: float = 0.0, max_conf: float =
         items.sort(key=lambda x: x["suggestion"].title.lower())
 
     return templates.TemplateResponse(
-        "review.html",
-        {
-            "request": request,
+            request,
+            "review.html",
+            {
             "items": items,
             "total_inbox": len(all_docs),
             "total_cached": len(items),
@@ -559,8 +560,9 @@ async def review_apply_all(request: Request, min_confidence: Annotated[float, Fo
             errors += 1
 
     return templates.TemplateResponse(
-        "partials/apply_all_results.html",
-        {"request": request, "applied": applied, "skipped": skipped, "errors": errors},
+            request,
+            "partials/apply_all_results.html",
+            {"applied": applied, "skipped": skipped, "errors": errors},
     )
 
 
@@ -578,9 +580,9 @@ async def cleanup_view(request: Request):
     merge_actions, delete_actions = _analyse(taxonomy)
 
     return templates.TemplateResponse(
-        "cleanup.html",
-        {
-            "request": request,
+            request,
+            "cleanup.html",
+            {
             "merge_actions": merge_actions,
             "delete_actions": delete_actions,
             "taxonomy": taxonomy,
@@ -618,8 +620,9 @@ async def cleanup_execute(request: Request):
     state.taxonomy = await state.paperless.get_taxonomy()
 
     return templates.TemplateResponse(
-        "partials/cleanup_results.html",
-        {"request": request, "results": results},
+            request,
+            "partials/cleanup_results.html",
+            {"results": results},
     )
 
 
@@ -639,8 +642,9 @@ async def history_view(request: Request):
     """Show processing history."""
     entries = state.db.get_history(limit=100)
     return templates.TemplateResponse(
-        "history.html",
-        {"request": request, "entries": entries, "taxonomy": state.taxonomy},
+            request,
+            "history.html",
+            {"entries": entries, "taxonomy": state.taxonomy},
     )
 
 
