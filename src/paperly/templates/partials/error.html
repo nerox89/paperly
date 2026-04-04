@@ -1,0 +1,12 @@
+<!-- Error message partial — shown when classification fails -->
+<div class="flex flex-col items-center justify-center py-12 text-red-500">
+  <p class="text-2xl mb-3">⚠️</p>
+  <p class="text-sm font-medium mb-2">Klassifizierung fehlgeschlagen</p>
+  <p class="text-xs text-gray-500 max-w-sm text-center">{{ error }}</p>
+  <button hx-get="/document/{{ request.path_params.get('doc_id', '') }}/classify"
+          hx-target="#suggestion-area"
+          hx-swap="innerHTML"
+          class="mt-4 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+    🔄 Erneut versuchen
+  </button>
+</div>

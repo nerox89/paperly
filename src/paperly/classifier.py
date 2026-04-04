@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 
 import anthropic
@@ -13,7 +14,9 @@ from paperly.paperless import Taxonomy
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-haiku-4-5"
-MAX_CONTENT_CHARS = 3500
+MAX_CONTENT_CHARS = 6000
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # seconds
 
 SYSTEM_PROMPT = """\
 Du bist ein Assistent zur Klassifizierung von gescannten Dokumenten in einem deutschen \
@@ -82,29 +85,40 @@ class Classifier:
 
         user_message = _build_user_message(truncated, taxonomy, original_title)
 
-        try:
-            response = self._client.messages.create(
-                model=MODEL,
-                max_tokens=512,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_message}],
-            )
-            raw = response.content[0].text.strip()
-            # Strip markdown code fences if Claude wraps the JSON
-            if raw.startswith("```"):
-                raw = raw.split("```", 2)[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.rstrip("`").strip()
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            logger.warning("Claude returned invalid JSON: %s", e)
-            return _fallback_result(original_title)
-        except anthropic.APIError as e:
-            logger.error("Anthropic API error: %s", e)
-            return _fallback_result(original_title)
+        last_error: Exception | None = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._client.messages.create(
+                    model=MODEL,
+                    max_tokens=512,
+                    system=SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": user_message}],
+                )
+                raw = response.content[0].text.strip()
+                # Strip markdown code fences if Claude wraps the JSON
+                if raw.startswith("```"):
+                    raw = raw.split("```", 2)[1]
+                    if raw.startswith("json"):
+                        raw = raw[4:]
+                    raw = raw.rstrip("`").strip()
+                data = json.loads(raw)
+                break
+            except json.JSONDecodeError as e:
+                logger.warning("Claude returned invalid JSON (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_BASE_DELAY * attempt)
+                    continue
+                return _fallback_result(original_title, "Ungültiges JSON von Claude.")
+            except anthropic.APIError as e:
+                logger.error("Anthropic API error (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_BASE_DELAY * attempt)
+                    continue
+                return _fallback_result(original_title, f"API-Fehler: {e}")
 
-        return ClassificationResult(
+        result = ClassificationResult(
             title=data.get("title", original_title),
             created=data.get("created"),
             correspondent_id=data.get("correspondent_id"),
@@ -113,8 +127,12 @@ class Classifier:
             document_type_id=data.get("document_type_id"),
             confidence=float(data.get("confidence", 0.5)),
             reasoning=data.get("reasoning", ""),
-            raw_content_preview=truncated[:200],
+            raw_content_preview=truncated[:500],
         )
+
+        # Validate returned IDs against taxonomy
+        result = _validate_ids(result, taxonomy)
+        return result
 
 
 def _build_user_message(content: str, taxonomy: Taxonomy, original_title: str) -> str:
@@ -152,7 +170,7 @@ Bitte klassifiziere dieses Dokument anhand des OCR-Textes und der vorhandenen Ta
 """
 
 
-def _fallback_result(title: str) -> ClassificationResult:
+def _fallback_result(title: str, reason: str = "Klassifizierung fehlgeschlagen.") -> ClassificationResult:
     return ClassificationResult(
         title=title,
         created=None,
@@ -161,5 +179,32 @@ def _fallback_result(title: str) -> ClassificationResult:
         tag_ids=[],
         document_type_id=None,
         confidence=0.0,
-        reasoning="Klassifizierung fehlgeschlagen.",
+        reasoning=reason,
     )
+
+
+def _validate_ids(result: ClassificationResult, taxonomy: Taxonomy) -> ClassificationResult:
+    """Ensure all returned IDs actually exist in the taxonomy."""
+    if result.correspondent_id is not None:
+        if not taxonomy.correspondent_by_id(result.correspondent_id):
+            logger.warning(
+                "Claude returned unknown correspondent_id=%d, clearing",
+                result.correspondent_id,
+            )
+            result.correspondent_id = None
+
+    if result.document_type_id is not None:
+        if not taxonomy.document_type_by_id(result.document_type_id):
+            logger.warning(
+                "Claude returned unknown document_type_id=%d, clearing",
+                result.document_type_id,
+            )
+            result.document_type_id = None
+
+    valid_tag_ids = {t.id for t in taxonomy.tags}
+    invalid_tags = [tid for tid in result.tag_ids if tid not in valid_tag_ids]
+    if invalid_tags:
+        logger.warning("Claude returned unknown tag_ids=%s, removing", invalid_tags)
+        result.tag_ids = [tid for tid in result.tag_ids if tid in valid_tag_ids]
+
+    return result

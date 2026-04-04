@@ -1,0 +1,19 @@
+<!-- Cleanup results partial — shown after executing cleanup -->
+<div class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+  <h3 class="text-sm font-semibold text-gray-700 mb-3">Ergebnisse</h3>
+  <div class="space-y-1">
+    {% for r in results %}
+    <div class="flex items-center gap-2 text-sm">
+      {% if r.ok %}
+        <span class="text-green-600">✓</span>
+      {% else %}
+        <span class="text-red-600">✗</span>
+      {% endif %}
+      <span class="{% if r.ok %}text-gray-700{% else %}text-red-600{% endif %}">{{ r.action }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <a href="/cleanup" class="inline-block mt-3 text-sm text-blue-600 hover:text-blue-800">
+    ↻ Neu analysieren
+  </a>
+</div>

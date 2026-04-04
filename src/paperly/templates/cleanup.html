@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}Taxonomie aufräumen — paperly{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+
+  <div class="mb-6">
+    <h1 class="text-xl font-semibold text-gray-900 mb-1">Taxonomie aufräumen</h1>
+    <p class="text-sm text-gray-500">Duplikate zusammenführen und verwaiste Einträge löschen.</p>
+  </div>
+
+  {% if not merge_actions and not delete_actions %}
+  <div class="text-center py-16 text-gray-500">
+    <p class="text-4xl mb-3">✅</p>
+    <p class="text-lg font-medium">Alles sauber!</p>
+    <p class="text-sm mt-1">Keine Duplikate oder verwaisten Einträge gefunden.</p>
+  </div>
+
+  {% else %}
+
+  <div id="cleanup-results"></div>
+
+  <!-- Merge actions -->
+  {% if merge_actions %}
+  <div class="mb-6">
+    <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+      Zusammenführungen ({{ merge_actions|length }})
+    </h2>
+    <div class="space-y-2">
+      {% for a in merge_actions %}
+      <div class="flex items-center gap-3 bg-white rounded-lg border border-gray-200 px-4 py-3">
+        <span class="text-xs px-2 py-0.5 rounded-full
+          {% if a.kind == 'document_type' %}bg-purple-100 text-purple-700
+          {% else %}bg-blue-100 text-blue-700{% endif %}">
+          {% if a.kind == 'document_type' %}Dokumenttyp{% else %}Korrespondent{% endif %}
+        </span>
+        <span class="text-sm text-red-600 line-through">{{ a.remove_name }}</span>
+        <span class="text-xs text-gray-400">→</span>
+        <span class="text-sm text-green-700 font-medium">{{ a.keep_name }}</span>
+        <span class="ml-auto text-xs text-gray-400">{{ a.doc_count }} Dok.</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Delete actions -->
+  {% if delete_actions %}
+  <div class="mb-6">
+    <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+      Löschungen ({{ delete_actions|length }})
+    </h2>
+    <div class="space-y-2">
+      {% for d in delete_actions %}
+      <div class="flex items-center gap-3 bg-white rounded-lg border border-gray-200 px-4 py-3">
+        <span class="text-xs px-2 py-0.5 rounded-full
+          {% if d.kind == 'document_type' %}bg-purple-100 text-purple-700
+          {% else %}bg-blue-100 text-blue-700{% endif %}">
+          {% if d.kind == 'document_type' %}Dokumenttyp{% else %}Korrespondent{% endif %}
+        </span>
+        <span class="text-sm text-gray-600">{{ d.name }}</span>
+        <span class="ml-auto text-xs text-gray-400">0 Dok.</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Execute button -->
+  <div class="flex gap-3 pt-4 border-t border-gray-200">
+    <button hx-post="/cleanup/execute"
+            hx-target="#cleanup-results"
+            hx-swap="innerHTML"
+            hx-confirm="Alle Änderungen durchführen? Dies kann nicht rückgängig gemacht werden."
+            class="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors">
+      🔧 Aufräumen durchführen
+    </button>
+    <a href="/"
+       class="px-4 py-2.5 text-sm text-gray-500 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+      Abbrechen
+    </a>
+  </div>
+
+  {% endif %}
+
+</div>
+{% endblock %}

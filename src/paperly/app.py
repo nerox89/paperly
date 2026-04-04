@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pathlib import Path
 
 from paperly.classifier import Classifier, ClassificationResult
+from paperly.database import Database
 from paperly.paperless import Document, PaperlessClient, Taxonomy
 
 load_dotenv()
@@ -35,11 +35,10 @@ class AppState:
     paperless: PaperlessClient
     classifier: Classifier
     taxonomy: Taxonomy
-    # Simple in-memory cache: doc_id -> ClassificationResult
-    suggestion_cache: dict[int, ClassificationResult]
+    db: Database
 
     def __init__(self) -> None:
-        self.suggestion_cache = {}
+        pass
 
 
 state = AppState()
@@ -52,7 +51,14 @@ async def lifespan(app: FastAPI):
     anthropic_key = os.environ["ANTHROPIC_API_KEY"]
 
     state.paperless = PaperlessClient(paperless_url, paperless_token)
+    await state.paperless.open()
     state.classifier = Classifier(anthropic_key)
+
+    # SQLite database for persistent cache and history
+    data_dir = os.environ.get("PAPERLY_DATA_DIR", ".")
+    state.db = Database(Path(data_dir) / "paperly.db")
+    state.db.open()
+
     state.taxonomy = await state.paperless.get_taxonomy()
 
     logger.info(
@@ -63,7 +69,10 @@ async def lifespan(app: FastAPI):
         len(state.taxonomy.storage_paths),
         state.taxonomy.inbox_tag_id,
     )
+    logger.info("Cached suggestions: %d", state.db.suggestion_count())
     yield
+    state.db.close()
+    await state.paperless.close()
 
 
 app = FastAPI(title="paperly", lifespan=lifespan)
@@ -106,7 +115,7 @@ async def index(request: Request, page: int = 1):
 @app.get("/document/{doc_id}", response_class=HTMLResponse)
 async def document_view(request: Request, doc_id: int):
     doc = await state.paperless.get_document(doc_id)
-    suggestion = state.suggestion_cache.get(doc_id)
+    suggestion = state.db.get_suggestion(doc_id)
     return templates.TemplateResponse(
         "document.html",
         {
@@ -122,14 +131,23 @@ async def document_view(request: Request, doc_id: int):
 @app.get("/document/{doc_id}/classify", response_class=HTMLResponse)
 async def classify_document(request: Request, doc_id: int):
     """Trigger AI classification and return the suggestion partial (HTMX target)."""
-    if doc_id not in state.suggestion_cache:
-        doc = await state.paperless.get_document(doc_id)
-        suggestion = await state.classifier.classify(
-            doc.content, state.taxonomy, original_title=doc.title
-        )
-        state.suggestion_cache[doc_id] = suggestion
+    suggestion = state.db.get_suggestion(doc_id)
 
-    suggestion = state.suggestion_cache[doc_id]
+    if suggestion is None:
+        doc = await state.paperless.get_document(doc_id)
+        try:
+            suggestion = await state.classifier.classify(
+                doc.content, state.taxonomy, original_title=doc.title
+            )
+        except Exception as e:
+            logger.error("Classification failed for doc %d: %s", doc_id, e)
+            return templates.TemplateResponse(
+                "partials/error.html",
+                {"request": request, "error": f"Klassifizierung fehlgeschlagen: {e}"},
+            )
+        state.db.set_suggestion(doc_id, suggestion)
+
+    suggestion = state.db.get_suggestion(doc_id)
     doc = await state.paperless.get_document(doc_id)
     return templates.TemplateResponse(
         "partials/suggestion.html",
@@ -157,6 +175,17 @@ async def apply_document(
     tag_new: Annotated[str, Form()] = "",
 ):
     """Apply chosen metadata and remove INBOX tag."""
+    # Capture old values for audit log
+    doc = await state.paperless.get_document(doc_id)
+    old_values = {
+        "title": doc.title,
+        "created": doc.created,
+        "correspondent": doc.correspondent,
+        "document_type": doc.document_type,
+        "storage_path": doc.storage_path,
+        "tags": doc.tags,
+    }
+
     # Resolve correspondent
     corr_id: int | None = None
     if correspondent_id:
@@ -201,7 +230,17 @@ async def apply_document(
         tags=chosen_tags,
     )
 
-    state.suggestion_cache.pop(doc_id, None)
+    # Audit log
+    new_values = {
+        "title": title,
+        "created": created or None,
+        "correspondent": corr_id,
+        "document_type": dt_id,
+        "storage_path": sp_id,
+        "tags": chosen_tags,
+    }
+    state.db.log_action(doc_id, "apply", old_values=old_values, new_values=new_values)
+    state.db.clear_suggestion(doc_id)
     return RedirectResponse("/", status_code=303)
 
 
@@ -212,7 +251,8 @@ async def skip_document(doc_id: int):
         doc = await state.paperless.get_document(doc_id)
         new_tags = [t for t in doc.tags if t != state.taxonomy.inbox_tag_id]
         await state.paperless.update_document(doc_id, tags=new_tags)
-    state.suggestion_cache.pop(doc_id, None)
+    state.db.log_action(doc_id, "skip")
+    state.db.clear_suggestion(doc_id)
     return RedirectResponse("/", status_code=303)
 
 
@@ -220,22 +260,15 @@ async def skip_document(doc_id: int):
 async def delete_document(doc_id: int):
     """Permanently delete a document from Paperless."""
     await state.paperless.delete_document(doc_id)
-    state.suggestion_cache.pop(doc_id, None)
+    state.db.log_action(doc_id, "delete")
+    state.db.clear_suggestion(doc_id)
     return RedirectResponse("/", status_code=303)
 
 
 @app.get("/proxy/thumb/{doc_id}")
 async def proxy_thumb(doc_id: int):
     """Proxy document thumbnail through paperly (avoids CORS issues)."""
-    import httpx
-    paperless_url = os.environ["PAPERLESS_URL"]
-    token = os.environ["PAPERLESS_TOKEN"]
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{paperless_url}/api/documents/{doc_id}/thumb/",
-            headers={"Authorization": f"Token {token}"},
-            timeout=10.0,
-        )
+    r = await state.paperless._c.get(f"/api/documents/{doc_id}/thumb/", timeout=10.0)
     return StreamingResponse(
         iter([r.content]),
         media_type=r.headers.get("content-type", "image/jpeg"),
@@ -245,14 +278,7 @@ async def proxy_thumb(doc_id: int):
 @app.get("/proxy/preview/{doc_id}")
 async def proxy_preview(doc_id: int):
     """Proxy document preview PDF through paperly."""
-    import httpx
-    paperless_url = os.environ["PAPERLESS_URL"]
-    token = os.environ["PAPERLESS_TOKEN"]
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.get(
-            f"{paperless_url}/api/documents/{doc_id}/preview/",
-            headers={"Authorization": f"Token {token}"},
-        )
+    r = await state.paperless._c.get(f"/api/documents/{doc_id}/preview/", timeout=30.0)
     return StreamingResponse(
         iter([r.content]),
         media_type="application/pdf",
@@ -268,6 +294,86 @@ async def stats():
 async def refresh_taxonomy():
     state.taxonomy = await state.paperless.get_taxonomy()
     return {"status": "ok", "correspondents": len(state.taxonomy.correspondents)}
+
+
+# ---------------------------------------------------------------------------
+# Cleanup routes
+# ---------------------------------------------------------------------------
+
+@app.get("/cleanup", response_class=HTMLResponse)
+async def cleanup_view(request: Request):
+    """Show taxonomy cleanup analysis page."""
+    from paperly.cleanup import _analyse
+
+    taxonomy = await state.paperless.get_taxonomy()
+    state.taxonomy = taxonomy
+    merge_actions, delete_actions = _analyse(taxonomy)
+
+    return templates.TemplateResponse(
+        "cleanup.html",
+        {
+            "request": request,
+            "merge_actions": merge_actions,
+            "delete_actions": delete_actions,
+            "taxonomy": taxonomy,
+        },
+    )
+
+
+@app.post("/cleanup/execute", response_class=HTMLResponse)
+async def cleanup_execute(request: Request):
+    """Execute cleanup actions (merges and deletes)."""
+    from paperly.cleanup import _analyse, _reassign_and_delete
+
+    taxonomy = await state.paperless.get_taxonomy()
+    merge_actions, delete_actions = _analyse(taxonomy)
+
+    results: list[dict] = []
+
+    for action in merge_actions:
+        try:
+            await _reassign_and_delete(state.paperless, taxonomy, action)
+            results.append({"action": f"Zusammengeführt: {action.remove_name} → {action.keep_name}", "ok": True})
+        except Exception as e:
+            results.append({"action": f"Fehler bei {action.remove_name}: {e}", "ok": False})
+
+    for action in delete_actions:
+        try:
+            if action.kind == "document_type":
+                await state.paperless.delete_document_type(action.item_id)
+            else:
+                await state.paperless.delete_correspondent(action.item_id)
+            results.append({"action": f"Gelöscht: {action.name}", "ok": True})
+        except Exception as e:
+            results.append({"action": f"Fehler beim Löschen von {action.name}: {e}", "ok": False})
+
+    state.taxonomy = await state.paperless.get_taxonomy()
+
+    return templates.TemplateResponse(
+        "partials/cleanup_results.html",
+        {"request": request, "results": results},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cache management
+# ---------------------------------------------------------------------------
+
+@app.post("/cache/clear")
+async def clear_cache():
+    """Clear all cached suggestions."""
+    state.db.clear_all_suggestions()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/history")
+async def history_view(request: Request):
+    """Show processing history."""
+    entries = state.db.get_history(limit=100)
+    return templates.TemplateResponse(
+        "history.html",
+        {"request": request, "entries": entries, "taxonomy": state.taxonomy},
+    )
 
 
 # ---------------------------------------------------------------------------

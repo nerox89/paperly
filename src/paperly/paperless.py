@@ -73,28 +73,41 @@ class PaperlessClient:
     def __init__(self, base_url: str, token: str) -> None:
         self._base = base_url.rstrip("/")
         self._headers = {"Authorization": f"Token {token}"}
+        self._http: httpx.AsyncClient | None = None
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
+    async def open(self) -> None:
+        """Create the shared HTTP client. Call once at startup."""
+        self._http = httpx.AsyncClient(
             base_url=self._base,
             headers=self._headers,
             timeout=30.0,
         )
 
+    async def close(self) -> None:
+        """Close the shared HTTP client. Call at shutdown."""
+        if self._http:
+            await self._http.aclose()
+            self._http = None
+
+    @property
+    def _c(self) -> httpx.AsyncClient:
+        """Return the shared client (raises if not opened)."""
+        if self._http is None:
+            raise RuntimeError("PaperlessClient not opened — call .open() first")
+        return self._http
+
     async def get_statistics(self) -> dict:
-        async with self._client() as c:
-            r = await c.get("/api/statistics/")
-            r.raise_for_status()
-            return r.json()
+        r = await self._c.get("/api/statistics/")
+        r.raise_for_status()
+        return r.json()
 
     async def get_taxonomy(self) -> Taxonomy:
-        async with self._client() as c:
-            tags_r, corr_r, dt_r, sp_r = await _gather(
-                c.get("/api/tags/?page_size=500"),
-                c.get("/api/correspondents/?page_size=500"),
-                c.get("/api/document_types/?page_size=500"),
-                c.get("/api/storage_paths/?page_size=500"),
-            )
+        tags_r, corr_r, dt_r, sp_r = await _gather(
+            self._c.get("/api/tags/?page_size=500"),
+            self._c.get("/api/correspondents/?page_size=500"),
+            self._c.get("/api/document_types/?page_size=500"),
+            self._c.get("/api/storage_paths/?page_size=500"),
+        )
 
         tags = [
             Tag(id=t["id"], name=t["name"], document_count=t.get("document_count", 0))
@@ -133,24 +146,22 @@ class PaperlessClient:
         page_size: int = 25,
     ) -> tuple[list[Document], int]:
         """Returns (documents, total_count)."""
-        async with self._client() as c:
-            r = await c.get(
-                "/api/documents/",
-                params={
-                    "tags__id__all": inbox_tag_id,
-                    "page": page,
-                    "page_size": page_size,
-                    "ordering": "created",
-                },
-            )
-            r.raise_for_status()
+        r = await self._c.get(
+            "/api/documents/",
+            params={
+                "tags__id__all": inbox_tag_id,
+                "page": page,
+                "page_size": page_size,
+                "ordering": "created",
+            },
+        )
+        r.raise_for_status()
         data = r.json()
         return [_parse_document(d) for d in data["results"]], data["count"]
 
     async def get_document(self, doc_id: int) -> Document:
-        async with self._client() as c:
-            r = await c.get(f"/api/documents/{doc_id}/")
-            r.raise_for_status()
+        r = await self._c.get(f"/api/documents/{doc_id}/")
+        r.raise_for_status()
         return _parse_document(r.json())
 
     async def get_document_thumb_url(self, doc_id: int) -> str:
@@ -184,50 +195,43 @@ class PaperlessClient:
         if tags is not None:
             payload["tags"] = tags
 
-        async with self._client() as c:
-            if remove_tag is not None and tags is None:
-                doc = await self.get_document(doc_id)
-                payload["tags"] = [t for t in doc.tags if t != remove_tag]
+        if remove_tag is not None and tags is None:
+            doc = await self.get_document(doc_id)
+            payload["tags"] = [t for t in doc.tags if t != remove_tag]
 
-            r = await c.patch(f"/api/documents/{doc_id}/", json=payload)
-            r.raise_for_status()
+        r = await self._c.patch(f"/api/documents/{doc_id}/", json=payload)
+        r.raise_for_status()
         return _parse_document(r.json())
 
     async def create_correspondent(self, name: str) -> Correspondent:
-        async with self._client() as c:
-            r = await c.post("/api/correspondents/", json={"name": name})
-            r.raise_for_status()
+        r = await self._c.post("/api/correspondents/", json={"name": name})
+        r.raise_for_status()
         d = r.json()
         return Correspondent(id=d["id"], name=d["name"])
 
     async def create_document_type(self, name: str) -> DocumentType:
-        async with self._client() as c:
-            r = await c.post("/api/document_types/", json={"name": name})
-            r.raise_for_status()
+        r = await self._c.post("/api/document_types/", json={"name": name})
+        r.raise_for_status()
         d = r.json()
         return DocumentType(id=d["id"], name=d["name"])
 
     async def create_tag(self, name: str) -> Tag:
-        async with self._client() as c:
-            r = await c.post("/api/tags/", json={"name": name})
-            r.raise_for_status()
+        r = await self._c.post("/api/tags/", json={"name": name})
+        r.raise_for_status()
         d = r.json()
         return Tag(id=d["id"], name=d["name"])
 
     async def delete_correspondent(self, correspondent_id: int) -> None:
-        async with self._client() as c:
-            r = await c.delete(f"/api/correspondents/{correspondent_id}/")
-            r.raise_for_status()
+        r = await self._c.delete(f"/api/correspondents/{correspondent_id}/")
+        r.raise_for_status()
 
     async def delete_document(self, doc_id: int) -> None:
-        async with self._client() as c:
-            r = await c.delete(f"/api/documents/{doc_id}/")
-            r.raise_for_status()
+        r = await self._c.delete(f"/api/documents/{doc_id}/")
+        r.raise_for_status()
 
     async def delete_document_type(self, document_type_id: int) -> None:
-        async with self._client() as c:
-            r = await c.delete(f"/api/document_types/{document_type_id}/")
-            r.raise_for_status()
+        r = await self._c.delete(f"/api/document_types/{document_type_id}/")
+        r.raise_for_status()
 
     async def bulk_update_documents(
         self,
@@ -237,16 +241,15 @@ class PaperlessClient:
         document_type: int | None = None,
     ) -> None:
         """Reassign correspondent/document_type for multiple docs (used during cleanup)."""
-        async with self._client() as c:
-            for doc_id in doc_ids:
-                payload: dict = {}
-                if correspondent is not None:
-                    payload["correspondent"] = correspondent
-                if document_type is not None:
-                    payload["document_type"] = document_type
-                if payload:
-                    r = await c.patch(f"/api/documents/{doc_id}/", json=payload)
-                    r.raise_for_status()
+        for doc_id in doc_ids:
+            payload: dict = {}
+            if correspondent is not None:
+                payload["correspondent"] = correspondent
+            if document_type is not None:
+                payload["document_type"] = document_type
+            if payload:
+                r = await self._c.patch(f"/api/documents/{doc_id}/", json=payload)
+                r.raise_for_status()
 
 
 def _parse_document(d: dict) -> Document:
