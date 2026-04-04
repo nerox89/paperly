@@ -1,5 +1,10 @@
 <!-- Batch progress partial — polled via HTMX -->
-{% if running %}
+{% set _running = running if running is defined else batch_running|default(false) %}
+{% set _total = total if total is defined and total is number else batch_total|default(0) %}
+{% set _done = done if done is defined and done is number else batch_done|default(0) %}
+{% set _errors = errors if errors is defined and errors is number else batch_errors|default(0) %}
+
+{% if _running %}
 <div class="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3"
      hx-get="/batch/progress" hx-trigger="every 2s" hx-swap="outerHTML">
   <div class="flex items-center justify-between mb-2">
@@ -10,22 +15,22 @@
       </svg>
       <span class="text-sm font-medium text-blue-800">Klassifiziere Dokumente…</span>
     </div>
-    <span class="text-sm text-blue-600 font-mono">{{ done }}/{{ total }}</span>
+    <span class="text-sm text-blue-600 font-mono">{{ _done }}/{{ _total }}</span>
   </div>
-  {% set pct = ((done / total) * 100) | round(1) if total > 0 else 0 %}
+  {% set pct = ((_done / _total) * 100) | round(1) if _total > 0 else 0 %}
   <div class="w-full bg-blue-200 rounded-full h-2">
     <div class="bg-blue-600 h-2 rounded-full transition-all" style="width: {{ pct }}%"></div>
   </div>
-  {% if errors > 0 %}
-  <p class="text-xs text-red-500 mt-1">{{ errors }} Fehler</p>
+  {% if _errors > 0 %}
+  <p class="text-xs text-red-500 mt-1">{{ _errors }} Fehler</p>
   {% endif %}
 </div>
-{% elif total > 0 %}
+{% elif _total > 0 %}
 <div class="bg-green-50 border border-green-200 rounded-lg px-4 py-3">
   <div class="flex items-center justify-between">
     <span class="text-sm font-medium text-green-800">
-      ✓ Klassifizierung abgeschlossen: {{ done }}/{{ total }}
-      {% if errors > 0 %} ({{ errors }} Fehler){% endif %}
+      ✓ Klassifizierung abgeschlossen: {{ _done }}/{{ _total }}
+      {% if _errors > 0 %} ({{ _errors }} Fehler){% endif %}
     </span>
     <a href="/review" class="text-sm text-blue-600 hover:text-blue-800 font-medium">
       Vorschläge prüfen →
