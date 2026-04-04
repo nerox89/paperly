@@ -95,6 +95,20 @@ class Database:
         row = self._conn.execute("SELECT COUNT(*) FROM suggestions").fetchone()
         return row[0] if row else 0
 
+    def next_suggestion_doc_id(self, exclude_doc_id: int | None = None) -> int | None:
+        """Return the doc_id of the next cached suggestion, or None."""
+        assert self._conn
+        if exclude_doc_id is not None:
+            row = self._conn.execute(
+                "SELECT doc_id FROM suggestions WHERE doc_id != ? ORDER BY created_at LIMIT 1",
+                (exclude_doc_id,),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT doc_id FROM suggestions ORDER BY created_at LIMIT 1"
+            ).fetchone()
+        return row[0] if row else None
+
     # ------------------------------------------------------------------
     # History / audit log
     # ------------------------------------------------------------------

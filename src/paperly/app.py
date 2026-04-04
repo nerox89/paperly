@@ -143,7 +143,7 @@ async def document_view(request: Request, doc_id: int):
             "doc": doc,
             "suggestion": suggestion,
             "taxonomy": state.taxonomy,
-            "paperless_url": os.environ["PAPERLESS_URL"],
+            "paperless_url": os.environ.get("PAPERLY_PAPERLESS_PUBLIC_URL", os.environ["PAPERLESS_URL"]),
         },
     )
 
@@ -272,6 +272,11 @@ async def apply_document(
     }
     state.db.log_action(doc_id, "apply", old_values=old_values, new_values=new_values)
     state.db.clear_suggestion(doc_id)
+
+    # Redirect to next suggested document, or back to inbox
+    next_id = state.db.next_suggestion_doc_id()
+    if next_id:
+        return RedirectResponse(f"/document/{next_id}", status_code=303)
     return RedirectResponse("/", status_code=303)
 
 
@@ -284,6 +289,10 @@ async def skip_document(doc_id: int):
         await state.paperless.update_document(doc_id, tags=new_tags)
     state.db.log_action(doc_id, "skip")
     state.db.clear_suggestion(doc_id)
+
+    next_id = state.db.next_suggestion_doc_id()
+    if next_id:
+        return RedirectResponse(f"/document/{next_id}", status_code=303)
     return RedirectResponse("/", status_code=303)
 
 
@@ -293,6 +302,10 @@ async def delete_document(doc_id: int):
     await state.paperless.delete_document(doc_id)
     state.db.log_action(doc_id, "delete")
     state.db.clear_suggestion(doc_id)
+
+    next_id = state.db.next_suggestion_doc_id()
+    if next_id:
+        return RedirectResponse(f"/document/{next_id}", status_code=303)
     return RedirectResponse("/", status_code=303)
 
 
