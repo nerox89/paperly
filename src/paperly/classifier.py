@@ -343,20 +343,34 @@ def _extract_json_from_text(text: str) -> str:
 
 
 def _parse_json_response(raw: str) -> dict:
-    """Parse JSON from LLM response, stripping markdown fences if present."""
-    if raw.startswith("```"):
-        raw = raw.split("```", 2)[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.rstrip("`").strip()
-    result = json.loads(raw)
+    """Parse JSON from LLM response, handling markdown fences and free text."""
+    # Try direct JSON parse first
+    cleaned = raw.strip()
+
+    # Strip markdown fences
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("```", 2)[1]
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.rstrip("`").strip()
+
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Fallback: extract JSON object from free-form text
+        extracted = _extract_json_from_text(raw)
+        if not extracted:
+            raise json.JSONDecodeError("No JSON object found in response", raw[:200], 0)
+        logger.info("Extracted JSON from free-form response: %.200s", extracted)
+        result = json.loads(extracted)
+
     # Some models wrap the result in an array — unwrap it
     if isinstance(result, list):
         if len(result) > 0 and isinstance(result[0], dict):
             return result[0]
-        raise json.JSONDecodeError("LLM returned array without dict", raw, 0)
+        raise json.JSONDecodeError("LLM returned array without dict", raw[:200], 0)
     if not isinstance(result, dict):
-        raise json.JSONDecodeError("LLM returned non-object JSON", raw, 0)
+        raise json.JSONDecodeError("LLM returned non-object JSON", raw[:200], 0)
     return result
 
 
