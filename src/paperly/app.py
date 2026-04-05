@@ -222,6 +222,12 @@ async def classify_document(request: Request, doc_id: int):
     )
 
 
+@app.get("/document/{doc_id}/apply")
+async def apply_document_get(doc_id: int):
+    """Redirect stale GET requests back to the document page."""
+    return RedirectResponse(f"/document/{doc_id}", status_code=303)
+
+
 @app.post("/document/{doc_id}/apply")
 async def apply_document(
     request: Request,
