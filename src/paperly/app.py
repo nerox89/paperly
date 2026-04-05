@@ -38,9 +38,6 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 BATCH_CONCURRENCY = int(os.environ.get("PAPERLY_BATCH_CONCURRENCY", "3"))
 AUTO_APPLY_MIN_CONFIDENCE = float(os.environ.get("PAPERLY_AUTO_APPLY_CONFIDENCE", "0.85"))
 
-TEMPLATES_DIR = Path(__file__).parent / "templates"
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-
 # ---------------------------------------------------------------------------
 # App state (loaded at startup, refreshed on demand)
 # ---------------------------------------------------------------------------
@@ -200,7 +197,7 @@ async def classify_document(request: Request, doc_id: int):
             return templates.TemplateResponse(
             request,
             "partials/error.html",
-            {"error": f"Klassifizierung fehlgeschlagen: {e}"},
+            {"error": f"Klassifizierung fehlgeschlagen: {e}", "doc_id": doc_id},
             )
         state.db.set_suggestion(doc_id, suggestion)
 
@@ -314,8 +311,17 @@ async def apply_document(
     return RedirectResponse("/", status_code=303)
 
 
+def _redirect_to_next(request: Request) -> RedirectResponse | JSONResponse:
+    """Redirect to next suggestion or inbox. Supports both regular and HTMX requests."""
+    next_id = state.db.next_suggestion_doc_id()
+    target = f"/document/{next_id}" if next_id else "/"
+    if request.headers.get("HX-Request"):
+        return JSONResponse({}, headers={"HX-Redirect": target})
+    return RedirectResponse(target, status_code=303)
+
+
 @app.post("/document/{doc_id}/skip")
-async def skip_document(doc_id: int):
+async def skip_document(request: Request, doc_id: int):
     """Remove INBOX tag without changing metadata (mark as reviewed)."""
     if state.taxonomy.inbox_tag_id:
         doc = await state.paperless.get_document(doc_id)
@@ -323,24 +329,16 @@ async def skip_document(doc_id: int):
         await state.paperless.update_document(doc_id, tags=new_tags)
     state.db.log_action(doc_id, "skip")
     state.db.clear_suggestion(doc_id)
-
-    next_id = state.db.next_suggestion_doc_id()
-    if next_id:
-        return RedirectResponse(f"/document/{next_id}", status_code=303)
-    return RedirectResponse("/", status_code=303)
+    return _redirect_to_next(request)
 
 
 @app.post("/document/{doc_id}/delete")
-async def delete_document(doc_id: int):
+async def delete_document(request: Request, doc_id: int):
     """Permanently delete a document from Paperless."""
     await state.paperless.delete_document(doc_id)
     state.db.log_action(doc_id, "delete")
     state.db.clear_suggestion(doc_id)
-
-    next_id = state.db.next_suggestion_doc_id()
-    if next_id:
-        return RedirectResponse(f"/document/{next_id}", status_code=303)
-    return RedirectResponse("/", status_code=303)
+    return _redirect_to_next(request)
 
 
 @app.get("/proxy/thumb/{doc_id}")

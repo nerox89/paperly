@@ -5,10 +5,10 @@
 {% block main_class %}{% endblock %}
 
 {% block content %}
-<div class="flex" style="height: calc(100vh - 3.5rem);">
+<div class="flex flex-col lg:flex-row" style="height: calc(100vh - 3.5rem);">
 
-  <!-- ═══ Left Panel: PDF Viewer (55%) ═══ -->
-  <div class="flex flex-col" style="width: 55%; background: #0a0f1a; border-right: 1px solid rgba(255,255,255,0.06);">
+  <!-- ═══ Left Panel: PDF Viewer ═══ -->
+  <div class="flex flex-col h-[40vh] lg:h-auto lg:flex-1" style="background: #0a0f1a; border-right: 1px solid rgba(255,255,255,0.06);">
     <!-- Top bar -->
     <div class="flex items-center justify-between px-4 py-2.5 shrink-0"
          style="background: rgba(15, 23, 42, 0.8); border-bottom: 1px solid rgba(255,255,255,0.06);">
@@ -16,7 +16,8 @@
         {{ doc.original_file_name or doc.title }}
       </span>
       <a href="{{ paperless_url }}/documents/{{ doc.id }}" target="_blank"
-         class="text-xs text-slate-500 hover:text-cyan-400 transition-colors ml-4 flex-shrink-0 flex items-center gap-1.5">
+         class="text-xs text-slate-500 hover:text-cyan-400 transition-colors ml-4 flex-shrink-0 flex items-center gap-1.5"
+         aria-label="In Paperless öffnen">
         <span>Paperless</span>
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-4.5-6H18m0 0v4.5m0-4.5L10.5 13.5"/>
@@ -31,8 +32,8 @@
     </iframe>
   </div>
 
-  <!-- ═══ Right Panel: Metadata Editor (45%) ═══ -->
-  <div class="flex flex-col overflow-y-auto" style="width: 45%; background: rgba(15, 23, 42, 0.4);">
+  <!-- ═══ Right Panel: Metadata Editor ═══ -->
+  <div class="flex flex-col overflow-y-auto lg:w-[45%]" style="background: rgba(15, 23, 42, 0.4);">
 
     <!-- Back link + header -->
     <div class="px-6 pt-5 pb-4 shrink-0" style="border-bottom: 1px solid rgba(255,255,255,0.06);">
@@ -83,7 +84,7 @@
           </div>
         </div>
         <p class="text-sm font-mono text-cyan-400 mb-1.5">Klassifiziere...</p>
-        <p class="text-xs text-slate-600">Claude analysiert das Dokument</p>
+        <p class="text-xs text-slate-600">KI analysiert das Dokument</p>
 
         <!-- Skeleton fields -->
         <div class="w-full mt-8 space-y-3 max-w-sm">

@@ -53,13 +53,13 @@
   <!-- Title + Date -->
   <div class="grid grid-cols-3 gap-3 mb-3">
     <div class="col-span-2">
-      <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Titel</label>
+      <label for="field-title" class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Titel</label>
       <input type="text" name="title" id="field-title" required autofocus
              value="{{ suggestion.title or doc.title }}"
              class="input-dark font-medium">
     </div>
     <div>
-      <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Datum</label>
+      <label for="field-date" class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Datum</label>
       <input type="date" name="created" id="field-date"
              value="{{ (suggestion.created or doc.created or '')[:10] }}"
              class="input-dark">
@@ -69,7 +69,7 @@
   <!-- Correspondent + Document Type -->
   <div class="grid grid-cols-2 gap-3 mb-3">
     <div>
-      <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Absender</label>
+      <label for="corr-select" class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Absender</label>
       <select name="correspondent_id" id="corr-select"
               onchange="toggleNew(this, 'corr-new')"
               class="input-dark">
@@ -88,7 +88,7 @@
              style="border-color: rgba(34, 211, 238, 0.3);">
     </div>
     <div>
-      <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Dokumenttyp</label>
+      <label for="dt-select" class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Dokumenttyp</label>
       <select name="document_type_id" id="dt-select"
               onchange="toggleNew(this, 'dt-new')"
               class="input-dark">
@@ -111,8 +111,8 @@
 
   <!-- Storage Path -->
   <div class="mb-3">
-    <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Speicherpfad</label>
-    <select name="storage_path_id" class="input-dark">
+    <label for="sp-select" class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Speicherpfad</label>
+    <select name="storage_path_id" id="sp-select" class="input-dark">
       <option value="">– keiner –</option>
       {% for sp in taxonomy.storage_paths | sort(attribute='name') %}
       <option value="{{ sp.id }}" {% if doc.storage_path == sp.id %}selected{% endif %}>
@@ -168,21 +168,20 @@
       <span>✓ Übernehmen</span>
       <kbd>↵</kbd>
     </button>
-    <form method="post" action="/document/{{ doc.id }}/skip" class="contents">
-      <button type="submit" id="skip-btn"
-              class="btn-ghost text-sm flex items-center gap-1.5 py-2.5">
-        Überspringen
-        <kbd>S</kbd>
-      </button>
-    </form>
+    <button type="button" id="skip-btn"
+            hx-post="/document/{{ doc.id }}/skip"
+            class="btn-ghost text-sm flex items-center gap-1.5 py-2.5">
+      Überspringen
+      <kbd>S</kbd>
+    </button>
     <a href="/" class="btn-ghost text-sm flex items-center py-2.5 px-3" title="Zurück (Esc)">✕</a>
-    <form method="post" action="/document/{{ doc.id }}/delete" class="contents"
-          onsubmit="return confirm('Dokument „{{ doc.title[:50] }}" unwiderruflich löschen?')">
-      <button type="submit" id="delete-btn"
-              class="btn-danger text-sm flex items-center py-2.5 px-3" title="Löschen">
-        🗑
-      </button>
-    </form>
+    <button type="button" id="delete-btn"
+            hx-post="/document/{{ doc.id }}/delete"
+            hx-confirm="Dokument unwiderruflich löschen?"
+            class="btn-danger text-sm flex items-center py-2.5 px-3"
+            aria-label="Dokument löschen" title="Löschen">
+      🗑
+    </button>
   </div>
 
 </form>
@@ -216,15 +215,15 @@ function toggleNew(sel, inputId) {
   }
 })();
 document.addEventListener("keydown", function(e) {
-  if (e.target.tagName === "TEXTAREA") return;
-  if (e.key === "Enter" && e.target.tagName !== "BUTTON" && e.target.tagName !== "A") {
+  const inField = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
+  if (e.key === "Enter" && !inField && e.target.tagName !== "BUTTON" && e.target.tagName !== "A") {
     e.preventDefault();
     document.getElementById("apply-form")?.requestSubmit();
   }
-  if (e.key === "s" && e.target.tagName === "BODY") {
+  if (e.key === "s" && !inField) {
     document.getElementById("skip-btn")?.click();
   }
-  if (e.key === "Escape") window.location.href = "/";
+  if (e.key === "Escape" && !inField) window.location.href = "/";
 });
 </script>
 

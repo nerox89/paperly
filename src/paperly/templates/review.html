@@ -70,9 +70,12 @@
   </div>
   <div id="apply-all-result" class="flex items-center gap-3">
     <form hx-post="/review/apply-all" hx-target="#apply-all-result" hx-swap="innerHTML"
-          hx-confirm="Alle {{ high_conf_count }} Vorschläge mit ≥{{ (auto_apply_threshold * 100) | int }}% Konfidenz automatisch übernehmen?">
+          hx-confirm="Alle {{ high_conf_count }} Vorschläge mit ≥{{ (auto_apply_threshold * 100) | int }}% Konfidenz automatisch übernehmen?"
+          hx-disabled-elt="find button"
+          hx-indicator="find .htmx-indicator">
       <input type="hidden" name="min_confidence" value="{{ auto_apply_threshold }}">
       <button type="submit" class="btn-neon text-sm flex items-center gap-2">
+        <span class="htmx-indicator inline-block w-4 h-4 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" style="display:none;"></span>
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
         Alle mit ≥&nbsp;{{ (auto_apply_threshold * 100) | int }}% übernehmen
       </button>

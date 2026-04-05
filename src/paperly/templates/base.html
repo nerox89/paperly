@@ -342,7 +342,7 @@
         {% for href, label, key in nav_items %}
         <a href="{{ href }}"
            class="relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors duration-200
-                  {% if request.url.path == href or (href != '/' and request.url.path.startswith(href)) %}
+                  {% if request.url.path == href or (href != '/' and request.url.path.startswith(href)) or (href == '/' and request.url.path.startswith('/document/')) %}
                     text-cyan-400 bg-cyan-500/10
                   {% else %}
                     text-slate-400 hover:text-slate-200 hover:bg-white/5

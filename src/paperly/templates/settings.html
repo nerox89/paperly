@@ -57,8 +57,8 @@
     <div id="claude-settings" class="glass rounded-xl p-6 border border-white/5 space-y-4 {% if settings.ai_provider != 'claude' %}hidden{% endif %}">
       <h2 class="text-lg font-mono font-semibold text-slate-200">Claude-Konfiguration</h2>
       <div>
-        <label class="block text-sm font-medium text-slate-400 mb-1">Modell</label>
-        <select name="claude_model" class="input w-full bg-slate-800/60 border border-white/10 rounded-lg px-3 py-2 text-slate-200 font-mono text-sm focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20">
+        <label for="claude-model" class="block text-sm font-medium text-slate-400 mb-1">Modell</label>
+        <select name="claude_model" id="claude-model" class="input-dark w-full">
           {% for m in ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-sonnet-4-5-20250514'] %}
           <option value="{{ m }}" {% if settings.claude_model == m %}selected{% endif %}>{{ m }}</option>
           {% endfor %}
@@ -72,10 +72,10 @@
       <h2 class="text-lg font-mono font-semibold text-slate-200">Ollama-Konfiguration</h2>
 
       <div>
-        <label class="block text-sm font-medium text-slate-400 mb-1">Server URL</label>
+        <label for="ollama-url" class="block text-sm font-medium text-slate-400 mb-1">Server URL</label>
         <div class="flex gap-2">
-          <input type="text" name="ollama_url" value="{{ settings.ollama_url }}"
-                 class="input flex-1 bg-slate-800/60 border border-white/10 rounded-lg px-3 py-2 text-slate-200 font-mono text-sm focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20"
+          <input type="text" name="ollama_url" id="ollama-url" value="{{ settings.ollama_url }}"
+                 class="input-dark flex-1"
                  placeholder="http://192.168.20.x:11434">
           <button type="button" id="test-btn"
                   onclick="testOllama()"
@@ -87,9 +87,9 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-slate-400 mb-1">Modell</label>
-        <input type="text" name="ollama_model" value="{{ settings.ollama_model }}"
-               class="input w-full bg-slate-800/60 border border-white/10 rounded-lg px-3 py-2 text-slate-200 font-mono text-sm focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20"
+        <label for="ollama-model" class="block text-sm font-medium text-slate-400 mb-1">Modell</label>
+        <input type="text" name="ollama_model" id="ollama-model" value="{{ settings.ollama_model }}"
+               class="input-dark w-full"
                placeholder="gemma4:e4b">
       </div>
 
