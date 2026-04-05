@@ -204,18 +204,37 @@ class PaperlessClient:
         return _parse_document(r.json())
 
     async def create_correspondent(self, name: str) -> Correspondent:
+        # Check for existing correspondent with same name (case-insensitive)
+        r = await self._c.get("/api/correspondents/", params={"name__iexact": name})
+        r.raise_for_status()
+        results = r.json().get("results", [])
+        if results:
+            d = results[0]
+            return Correspondent(id=d["id"], name=d["name"])
         r = await self._c.post("/api/correspondents/", json={"name": name})
         r.raise_for_status()
         d = r.json()
         return Correspondent(id=d["id"], name=d["name"])
 
     async def create_document_type(self, name: str) -> DocumentType:
+        r = await self._c.get("/api/document_types/", params={"name__iexact": name})
+        r.raise_for_status()
+        results = r.json().get("results", [])
+        if results:
+            d = results[0]
+            return DocumentType(id=d["id"], name=d["name"])
         r = await self._c.post("/api/document_types/", json={"name": name})
         r.raise_for_status()
         d = r.json()
         return DocumentType(id=d["id"], name=d["name"])
 
     async def create_tag(self, name: str) -> Tag:
+        r = await self._c.get("/api/tags/", params={"name__iexact": name})
+        r.raise_for_status()
+        results = r.json().get("results", [])
+        if results:
+            d = results[0]
+            return Tag(id=d["id"], name=d["name"])
         r = await self._c.post("/api/tags/", json={"name": name})
         r.raise_for_status()
         d = r.json()
