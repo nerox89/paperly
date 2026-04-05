@@ -61,6 +61,25 @@ Unterstützte Formate: "15.03.2024" → "2024-03-15", "März 2024" → "2024-03-
 - Titel: kein Datum, kein Absendername (diese sind separat gespeichert)
 """
 
+# Few-shot example appended for local models that benefit from concrete examples
+FEWSHOT_EXAMPLE = """
+## Beispiel
+
+Eingabe (OCR-Text): "Sparkasse Lübeck Kontoauszug Nr. 3/2024 Kontonummer 123456789 \
+Auszugsdatum: 15.03.2024 Alter Saldo: 1.234,56 EUR Neuer Saldo: 1.456,78 EUR"
+Vorhandene Korrespondenten: 42: Sparkasse Lübeck
+Vorhandene Tags: 5: Finanzen, 12: Bank
+Vorhandene Dokumenttypen: 3: Kontoauszug
+
+Korrekte Antwort:
+{"title": "Kontoauszug Nr. 3/2024", "created": "2024-03-15", "correspondent_id": 42, \
+"correspondent_name": "Sparkasse Lübeck", "tag_ids": [5, 12], "new_tags": [], \
+"document_type_id": 3, "confidence": 0.95, "reasoning": "Kontoauszug der Sparkasse Lübeck, \
+Auszugsdatum 15.03.2024, Korrespondent und Dokumenttyp eindeutig zuordenbar."}
+
+Jetzt klassifiziere das folgende Dokument:
+"""
+
 
 @dataclass
 class ClassificationResult:
@@ -169,7 +188,7 @@ class OllamaProvider(BaseProvider):
         last_error: Exception | None = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                async with httpx.AsyncClient(timeout=180.0) as client:
+                async with httpx.AsyncClient(timeout=240.0) as client:
                     resp = await client.post(
                         f"{self._base_url}/api/chat",
                         json={
@@ -180,11 +199,18 @@ class OllamaProvider(BaseProvider):
                             ],
                             "format": "json",
                             "stream": False,
-                            "options": {"num_predict": 800},
+                            "think": True,
+                            "options": {
+                                "num_predict": 4096,
+                                "temperature": 0.1,
+                            },
                         },
                     )
                     resp.raise_for_status()
                     data = resp.json()
+                    thinking = (data.get("message", {}).get("thinking", "") or "").strip()
+                    if thinking:
+                        logger.debug("Ollama thinking (%d chars): %.200s…", len(thinking), thinking)
                     raw = (data.get("message", {}).get("content", "") or "").strip()
                     if not raw:
                         raise json.JSONDecodeError("Empty response from Ollama", "", 0)
@@ -243,8 +269,13 @@ class Classifier:
         truncated = _smart_truncate(content, MAX_CONTENT_CHARS)
         user_message = _build_user_message(truncated, taxonomy, original_title, filename)
 
+        # Local models benefit from few-shot examples and an explicit closing instruction
+        system = SYSTEM_PROMPT
+        if self._provider.name == "ollama":
+            system = SYSTEM_PROMPT + FEWSHOT_EXAMPLE
+
         try:
-            data = await self._provider.generate(SYSTEM_PROMPT, user_message)
+            data = await self._provider.generate(system, user_message)
         except Exception as e:
             logger.error("Classification failed (%s/%s): %s", self._provider.name, self._provider.model, e)
             return _fallback_result(original_title, f"Fehler ({self._provider.name}): {e}")
