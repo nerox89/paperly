@@ -29,6 +29,9 @@ Deine Aufgabe ist es, anhand des OCR-Textes eines Dokuments folgende Metadaten v
 Vertragsdatum). Bevorzuge das inhaltlich wichtigste Datum (Rechnungsdatum > Druckdatum > Eingangsdatum).
 - Einen prägnanten, beschreibenden Titel (max. 80 Zeichen, auf Deutsch)
 - Den passenden Absender/Korrespondenten aus der vorhandenen Liste (oder einen neuen Namen). \
+Der Korrespondent ist immer der ABSENDER/VERFASSER des Dokuments (z.B. Firma, Behörde, Bank), \
+NIEMALS der Empfänger. Der Dokumenteneigentümer heißt "Maximilian Faure" — sein Name erscheint \
+auf fast allen Dokumenten als Empfänger/Adressat und darf NICHT als Korrespondent gewählt werden. \
 Achte auf ähnliche Schreibweisen (z.B. "Sparkasse" vs "Sparkasse Lübeck") und wähle den existierenden \
 Eintrag wenn er passt.
 - Passende Tags aus der vorhandenen Liste. Du kannst auch neue Tags vorschlagen wenn kein passender existiert.
