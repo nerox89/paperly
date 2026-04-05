@@ -126,6 +126,9 @@
         {% if s.reasoning %}
         <p class="text-xs text-slate-500 truncate max-w-2xl" title="{{ s.reasoning }}">{{ s.reasoning }}</p>
         {% endif %}
+        {% if s.provider_name %}
+        <span class="chip chip-violet text-[0.55rem] mt-1 inline-block">{{ s.provider_name }}/{{ s.provider_model }}</span>
+        {% endif %}
       </div>
 
       <!-- Actions -->

@@ -3,35 +3,112 @@
 {% set _total = total if total is defined and total is number else batch_total|default(0) %}
 {% set _done = done if done is defined and done is number else batch_done|default(0) %}
 {% set _errors = errors if errors is defined and errors is number else batch_errors|default(0) %}
+{% set _cancelled = cancelled|default(false) %}
+{% set _current_doc = current_doc|default("") %}
+{% set _elapsed = elapsed|default(0) %}
+{% set _eta = eta|default(0) %}
+{% set _provider = provider|default("") %}
+{% set _log = log|default([]) %}
+
+{% macro format_time(seconds) %}{% set m = (seconds // 60)|int %}{% set s = (seconds % 60)|int %}{{ "%d:%02d"|format(m, s) }}{% endmacro %}
 
 {% if _running %}
-<div class="glass px-5 py-4"
+<div class="glass px-5 py-4 space-y-3"
      hx-get="/batch/progress" hx-trigger="every 2s" hx-swap="outerHTML">
-  <div class="flex items-center justify-between mb-3">
+
+  <!-- Header row: status + counter + timing -->
+  <div class="flex items-center justify-between">
     <div class="flex items-center gap-3">
       <svg class="animate-spin h-4 w-4 text-cyan-400" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
       </svg>
       <span class="text-sm font-medium text-slate-200">Klassifiziere Dokumente…</span>
+      {% if _provider %}
+      <span class="chip chip-violet text-[0.6rem]">{{ _provider }}</span>
+      {% endif %}
     </div>
-    <span class="text-sm text-cyan-400 font-mono font-semibold">{{ _done }}/{{ _total }}</span>
+    <div class="flex items-center gap-4">
+      <span class="text-xs text-slate-500 font-mono">
+        ⏱ {{ format_time(_elapsed) }}
+        {% if _eta > 0 and _done > 2 %} · ~{{ format_time(_eta) }} verbl.{% endif %}
+      </span>
+      <span class="text-sm text-cyan-400 font-mono font-semibold">{{ _done }}/{{ _total }}</span>
+    </div>
   </div>
+
+  <!-- Progress bar -->
   {% set pct = ((_done / _total) * 100) | round(1) if _total > 0 else 0 %}
   <div class="progress-neon">
     <div class="fill" style="width: {{ pct }}%"></div>
   </div>
-  {% if _errors > 0 %}
-  <p class="text-xs text-rose-400 mt-2 font-mono">⚠ {{ _errors }} Fehler</p>
+
+  <!-- Currently processing -->
+  {% if _current_doc %}
+  <div class="flex items-center gap-2 text-xs text-slate-500">
+    <span class="inline-flex h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+    <span class="truncate">{{ _current_doc }}</span>
+  </div>
   {% endif %}
+
+  <!-- Live log of completed docs -->
+  {% if _log %}
+  <div class="max-h-36 overflow-y-auto space-y-0.5 border-t border-white/5 pt-2">
+    {% for entry in _log | reverse %}
+    <div class="flex items-center gap-2 text-xs py-0.5">
+      {% if entry.status == 'ok' %}
+      <span class="text-emerald-400 flex-shrink-0">✓</span>
+      {% else %}
+      <span class="text-rose-400 flex-shrink-0">✗</span>
+      {% endif %}
+      <span class="text-slate-400 truncate flex-1">{{ entry.title }}</span>
+      {% if entry.confidence is not none %}
+      <span class="font-mono text-slate-500 flex-shrink-0">{{ (entry.confidence * 100)|round|int }}%</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Error count + cancel button -->
+  <div class="flex items-center justify-between pt-1">
+    {% if _errors > 0 %}
+    <p class="text-xs text-rose-400 font-mono">⚠ {{ _errors }} Fehler</p>
+    {% else %}
+    <span></span>
+    {% endif %}
+    <button hx-post="/batch/cancel" hx-swap="none"
+            hx-confirm="Batch-Klassifizierung abbrechen?"
+            class="text-xs text-slate-500 hover:text-rose-400 transition-colors font-medium px-2 py-1 rounded hover:bg-rose-500/10">
+      ✕ Abbrechen
+    </button>
+  </div>
 </div>
+
+{% elif _cancelled and _total > 0 %}
+<!-- Cancelled state -->
+<div class="glass px-5 py-4 border-amber-500/20">
+  <div class="flex items-center justify-between">
+    <span class="text-sm font-medium text-amber-400 flex items-center gap-2">
+      <span class="inline-flex h-2 w-2 rounded-full bg-amber-400"></span>
+      Abgebrochen: {{ _done }}/{{ _total }} verarbeitet
+      {% if _errors > 0 %}<span class="text-rose-400 font-mono text-xs">({{ _errors }} Fehler)</span>{% endif %}
+    </span>
+    <a href="/review" class="btn-neon text-xs px-3 py-1.5">
+      Vorschläge prüfen →
+    </a>
+  </div>
+</div>
+
 {% elif _total > 0 %}
+<!-- Completed state -->
 <div class="glass px-5 py-4 border-emerald-500/20">
   <div class="flex items-center justify-between">
     <span class="text-sm font-medium text-emerald-400 flex items-center gap-2">
       <span class="inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
       Klassifizierung abgeschlossen: {{ _done }}/{{ _total }}
       {% if _errors > 0 %}<span class="text-rose-400 font-mono text-xs">({{ _errors }} Fehler)</span>{% endif %}
+      {% if _elapsed > 0 %}<span class="text-slate-500 font-mono text-xs">in {{ format_time(_elapsed) }}</span>{% endif %}
     </span>
     <a href="/review" class="btn-neon text-xs px-3 py-1.5">
       Vorschläge prüfen →

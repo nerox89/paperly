@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -54,12 +55,20 @@ class AppState:
     batch_total: int
     batch_done: int
     batch_errors: int
+    batch_cancel: bool
+    batch_start_time: float
+    batch_current_doc: str
+    batch_log: list[dict]  # last N completed items
 
     def __init__(self) -> None:
         self.batch_running = False
         self.batch_total = 0
         self.batch_done = 0
         self.batch_errors = 0
+        self.batch_cancel = False
+        self.batch_start_time = 0.0
+        self.batch_current_doc = ""
+        self.batch_log = []
 
 
 state = AppState()
@@ -392,13 +401,34 @@ async def _run_batch(doc_ids: list[int]) -> None:
     state.batch_total = len(doc_ids)
     state.batch_done = 0
     state.batch_errors = 0
+    state.batch_cancel = False
+    state.batch_start_time = time.time()
+    state.batch_current_doc = ""
+    state.batch_log = []
 
     sem = asyncio.Semaphore(BATCH_CONCURRENCY)
 
     async def _worker(doc_id: int) -> None:
+        if state.batch_cancel:
+            return
         async with sem:
+            if state.batch_cancel:
+                return
             doc = await state.paperless.get_document(doc_id)
+            state.batch_current_doc = doc.title or f"Doc #{doc_id}"
             _, result = await _classify_one(doc)
+
+            entry = {
+                "doc_id": doc_id,
+                "title": doc.title or f"Doc #{doc_id}",
+                "status": "ok" if result else "error",
+                "confidence": round(result.confidence, 2) if result else None,
+                "provider": f"{result.provider_name}/{result.provider_model}" if result else "",
+            }
+            state.batch_log.append(entry)
+            if len(state.batch_log) > 30:
+                state.batch_log = state.batch_log[-30:]
+
             if result is None:
                 state.batch_errors += 1
             state.batch_done += 1
@@ -406,7 +436,13 @@ async def _run_batch(doc_ids: list[int]) -> None:
     tasks = [asyncio.create_task(_worker(did)) for did in doc_ids]
     await asyncio.gather(*tasks, return_exceptions=True)
     state.batch_running = False
-    logger.info("Batch complete: %d/%d done, %d errors", state.batch_done, state.batch_total, state.batch_errors)
+    state.batch_current_doc = ""
+    cancelled = state.batch_cancel
+    logger.info(
+        "Batch %s: %d/%d done, %d errors",
+        "cancelled" if cancelled else "complete",
+        state.batch_done, state.batch_total, state.batch_errors,
+    )
 
 
 @app.post("/batch/start")
@@ -442,18 +478,43 @@ async def batch_start(request: Request):
 
 @app.get("/batch/status")
 async def batch_status():
-    """Return current batch classification progress."""
+    """Return current batch classification progress with detail."""
+    elapsed = time.time() - state.batch_start_time if state.batch_start_time else 0
+    avg_per_doc = elapsed / state.batch_done if state.batch_done > 0 else 0
+    remaining = state.batch_total - state.batch_done
+    eta = avg_per_doc * remaining if avg_per_doc > 0 else 0
+
     return JSONResponse({
         "running": state.batch_running,
         "total": state.batch_total,
         "done": state.batch_done,
         "errors": state.batch_errors,
+        "cancelled": state.batch_cancel,
+        "current_doc": state.batch_current_doc,
+        "elapsed": round(elapsed, 1),
+        "eta": round(eta, 1),
+        "provider": f"{state.classifier.provider.name}/{state.classifier.provider.model}",
+        "log": state.batch_log[-10:],
     })
+
+
+@app.post("/batch/cancel")
+async def batch_cancel():
+    """Cancel a running batch classification."""
+    if state.batch_running:
+        state.batch_cancel = True
+        return JSONResponse({"status": "cancelling"})
+    return JSONResponse({"status": "not_running"})
 
 
 @app.get("/batch/progress", response_class=HTMLResponse)
 async def batch_progress(request: Request):
     """HTMX partial: batch progress bar."""
+    elapsed = time.time() - state.batch_start_time if state.batch_start_time else 0
+    avg_per_doc = elapsed / state.batch_done if state.batch_done > 0 else 0
+    remaining = state.batch_total - state.batch_done
+    eta = avg_per_doc * remaining if avg_per_doc > 0 else 0
+
     return templates.TemplateResponse(
             request,
             "partials/batch_progress.html",
@@ -462,6 +523,12 @@ async def batch_progress(request: Request):
             "total": state.batch_total,
             "done": state.batch_done,
             "errors": state.batch_errors,
+            "cancelled": state.batch_cancel,
+            "current_doc": state.batch_current_doc,
+            "elapsed": round(elapsed, 1),
+            "eta": round(eta, 1),
+            "provider": f"{state.classifier.provider.name}/{state.classifier.provider.model}",
+            "log": state.batch_log[-10:],
         },
     )
 

@@ -74,6 +74,8 @@ class ClassificationResult:
     reasoning: str
     raw_content_preview: str = ""
     new_tags: list[str] = field(default_factory=list)
+    provider_name: str = ""
+    provider_model: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +264,8 @@ class Classifier:
 
         result = _validate_ids(result, taxonomy)
         result = _fuzzy_match_correspondent(result, taxonomy)
+        result.provider_name = self._provider.name
+        result.provider_model = self._provider.model
         return result
 
 
