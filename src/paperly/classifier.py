@@ -307,15 +307,43 @@ class Classifier:
         *,
         original_title: str = "",
         filename: str = "",
+        db: object | None = None,
     ) -> ClassificationResult:
         """Classify a document based on OCR content and existing taxonomy."""
         truncated = _smart_truncate(content, MAX_CONTENT_CHARS)
-        user_message = _build_user_message(truncated, taxonomy, original_title, filename)
+
+        # Few-shot examples from learning history
+        examples = None
+        if db and hasattr(db, "get_similar_examples"):
+            try:
+                examples = db.get_similar_examples(truncated[:500], limit=3)
+                if examples:
+                    logger.info("Injecting %d few-shot examples from learning history", len(examples))
+            except Exception as e:
+                logger.warning("Failed to load few-shot examples: %s", e)
+
+        user_message = _build_user_message(truncated, taxonomy, original_title, filename, examples)
 
         # Build system prompt: default + optional custom instructions
         system = SYSTEM_PROMPT
         if self.custom_prompt:
             system += f"\n\nZusätzliche Anweisungen:\n{self.custom_prompt}\n"
+
+        # Inject active correction rules
+        rule_ids_used: list[int] = []
+        if db and hasattr(db, "get_active_rules"):
+            try:
+                rules = db.get_active_rules()
+                if rules:
+                    rule_texts = []
+                    for r in rules:
+                        rule_texts.append(f"- {r['prompt_text']}")
+                        rule_ids_used.append(r["id"])
+                    system += "\n\nGelernte Korrekturregeln:\n" + "\n".join(rule_texts) + "\n"
+                    logger.info("Injecting %d correction rules into prompt", len(rules))
+            except Exception as e:
+                logger.warning("Failed to load correction rules: %s", e)
+
         if self._provider.name == "ollama":
             system += FEWSHOT_EXAMPLE
 
@@ -324,6 +352,13 @@ class Classifier:
         except Exception as e:
             logger.error("Classification failed (%s/%s): %s", self._provider.name, self._provider.model, e)
             return _fallback_result(original_title, f"Fehler ({self._provider.name}): {e}")
+
+        # Track rule usage
+        if rule_ids_used and db and hasattr(db, "increment_rule_hits"):
+            try:
+                db.increment_rule_hits(rule_ids_used)
+            except Exception:
+                pass
 
         created = _normalise_date(data.get("created"))
 
@@ -456,7 +491,13 @@ def _smart_truncate(content: str, max_chars: int) -> str:
     return f"{head}\n\n[... {len(content) - head_size - tail_size} Zeichen übersprungen ...]\n\n{tail}"
 
 
-def _build_user_message(content: str, taxonomy: Taxonomy, original_title: str, filename: str = "") -> str:
+def _build_user_message(
+    content: str,
+    taxonomy: Taxonomy,
+    original_title: str,
+    filename: str = "",
+    examples: list[dict] | None = None,
+) -> str:
     corr_list = "\n".join(
         f"  {c.id}: {c.name}" for c in sorted(taxonomy.correspondents, key=lambda x: x.name)
     )
@@ -485,6 +526,47 @@ def _build_user_message(content: str, taxonomy: Taxonomy, original_title: str, f
 
     if filename:
         parts.append(f"## Dateiname\n{filename}")
+
+    # Few-shot examples from confirmed history (self-learning)
+    if examples:
+        example_parts = []
+        for i, ex in enumerate(examples, 1):
+            preview = (ex.get("content_preview") or "")[:200]
+            corr_name = ""
+            if ex.get("correspondent_id"):
+                c = taxonomy.correspondent_by_id(ex["correspondent_id"])
+                corr_name = f" ({c.name})" if c else ""
+            dt_name = ""
+            if ex.get("document_type_id"):
+                dt = taxonomy.document_type_by_id(ex["document_type_id"])
+                dt_name = dt.name if dt else ""
+            sp_name = ""
+            if ex.get("storage_path_id"):
+                sp = taxonomy.storage_path_by_id(ex["storage_path_id"])
+                sp_name = sp.name if sp else ""
+            tag_names = []
+            for tid in ex.get("tag_ids") or []:
+                t = taxonomy.tag_by_id(tid)
+                if t:
+                    tag_names.append(t.name)
+
+            lines = [f"Beispiel {i}:"]
+            lines.append(f'  Text: "{preview}..."')
+            lines.append(f'  → Titel: "{ex.get("title", "")}"')
+            if corr_name:
+                lines.append(f"  → Absender: ID {ex['correspondent_id']}{corr_name}")
+            if dt_name:
+                lines.append(f"  → Dokumenttyp: {dt_name}")
+            if sp_name:
+                lines.append(f"  → Speicherpfad: {sp_name}")
+            if tag_names:
+                lines.append(f"  → Tags: [{', '.join(tag_names)}]")
+            example_parts.append("\n".join(lines))
+
+        parts.append(
+            "## Bereits korrekt klassifizierte ähnliche Dokumente\n"
+            + "\n\n".join(example_parts)
+        )
 
     parts.append(f"## OCR-Text des Dokuments\n{content}")
     parts.append(

@@ -197,6 +197,7 @@ async def classify_document(request: Request, doc_id: int):
                 doc.content, state.taxonomy,
                 original_title=doc.title,
                 filename=doc.original_file_name or "",
+                db=state.db,
             )
         except Exception as e:
             logger.error("Classification failed for doc %d: %s", doc_id, e)
@@ -306,6 +307,19 @@ async def apply_document(
         tags=chosen_tags,
     )
 
+    # Record feedback for self-learning (before clearing suggestion)
+    suggestion = state.db.get_suggestion(doc_id)
+    state.db.record_feedback(
+        doc_id, action="apply",
+        suggestion=suggestion,
+        final_title=title,
+        final_correspondent_id=corr_id,
+        final_document_type_id=dt_id,
+        final_storage_path_id=sp_id,
+        final_tag_ids=chosen_tags,
+        content_preview=doc.content[:500] if doc.content else "",
+    )
+
     # Audit log
     new_values = {
         "title": title,
@@ -337,6 +351,10 @@ def _redirect_to_next(request: Request) -> RedirectResponse | JSONResponse:
 @app.post("/document/{doc_id}/skip")
 async def skip_document(request: Request, doc_id: int):
     """Remove INBOX tag without changing metadata (mark as reviewed)."""
+    # Record feedback before clearing
+    suggestion = state.db.get_suggestion(doc_id)
+    if suggestion:
+        state.db.record_feedback(doc_id, action="skip", suggestion=suggestion)
     if state.taxonomy.inbox_tag_id:
         doc = await state.paperless.get_document(doc_id)
         new_tags = [t for t in doc.tags if t != state.taxonomy.inbox_tag_id]
@@ -349,6 +367,10 @@ async def skip_document(request: Request, doc_id: int):
 @app.post("/document/{doc_id}/delete")
 async def delete_document(request: Request, doc_id: int):
     """Permanently delete a document from Paperless."""
+    # Record feedback before clearing
+    suggestion = state.db.get_suggestion(doc_id)
+    if suggestion:
+        state.db.record_feedback(doc_id, action="delete", suggestion=suggestion)
     await state.paperless.delete_document(doc_id)
     state.db.log_action(doc_id, "delete")
     state.db.clear_suggestion(doc_id)
@@ -399,6 +421,7 @@ async def _classify_one(doc: Document) -> tuple[int, ClassificationResult | None
             doc.content, state.taxonomy,
             original_title=doc.title,
             filename=doc.original_file_name or "",
+            db=state.db,
         )
         state.db.set_suggestion(doc.id, result)
         return doc.id, result
@@ -681,6 +704,16 @@ async def review_apply_all(request: Request, min_confidence: Annotated[float, Fo
                 storage_path=suggestion.storage_path_id,
                 tags=tags,
             )
+            state.db.record_feedback(
+                doc.id, action="apply",
+                suggestion=suggestion,
+                final_title=suggestion.title,
+                final_correspondent_id=suggestion.correspondent_id,
+                final_document_type_id=suggestion.document_type_id,
+                final_storage_path_id=suggestion.storage_path_id,
+                final_tag_ids=tags,
+                content_preview=doc.content[:500] if doc.content else "",
+            )
             state.db.log_action(
                 doc.id, "auto_apply",
                 old_values={"title": doc.title, "tags": doc.tags},
@@ -880,6 +913,85 @@ async def test_ollama(request: Request):
         return JSONResponse(info)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+
+
+# ---------------------------------------------------------------------------
+# Learning dashboard & rules
+# ---------------------------------------------------------------------------
+
+@app.get("/learning", response_class=HTMLResponse)
+async def learning_dashboard(request: Request):
+    """Show learning progress and feedback statistics."""
+    stats = state.db.get_feedback_stats()
+    corrections = state.db.get_top_corrections(limit=10)
+
+    # Resolve names for corrections
+    for c in corrections:
+        if c["type"] == "correspondent":
+            from_obj = state.taxonomy.correspondent_by_id(c["from_id"])
+            to_obj = state.taxonomy.correspondent_by_id(c["to_id"])
+            c["from_name"] = from_obj.name if from_obj else f"ID {c['from_id']}"
+            c["to_name"] = to_obj.name if to_obj else f"ID {c['to_id']}"
+        elif c["type"] == "document_type":
+            from_obj = state.taxonomy.document_type_by_id(c["from_id"])
+            to_obj = state.taxonomy.document_type_by_id(c["to_id"])
+            c["from_name"] = from_obj.name if from_obj else f"ID {c['from_id']}"
+            c["to_name"] = to_obj.name if to_obj else f"ID {c['to_id']}"
+
+    rules = state.db.get_all_rules()
+    new_patterns = state.db.detect_correction_patterns(min_occurrences=3)
+
+    return templates.TemplateResponse(
+        request,
+        "learning.html",
+        {
+            "stats": stats,
+            "corrections": corrections,
+            "rules": rules,
+            "new_patterns": new_patterns,
+            "feedback_count": state.db.feedback_count(),
+        },
+    )
+
+
+@app.post("/learning/rules/add")
+async def add_rule(
+    request: Request,
+    rule_type: Annotated[str, Form()] = "general",
+    description: Annotated[str, Form()] = "",
+    prompt_text: Annotated[str, Form()] = "",
+):
+    """Add a manual correction rule."""
+    if description.strip() and prompt_text.strip():
+        state.db.add_rule(rule_type, description.strip(), prompt_text.strip(), auto_generated=False)
+    return RedirectResponse("/learning", status_code=303)
+
+
+@app.post("/learning/rules/{rule_id}/toggle")
+async def toggle_rule(rule_id: int):
+    """Toggle a correction rule on/off."""
+    state.db.toggle_rule(rule_id)
+    return RedirectResponse("/learning", status_code=303)
+
+
+@app.post("/learning/rules/{rule_id}/delete")
+async def delete_rule(rule_id: int):
+    """Delete a correction rule."""
+    state.db.delete_rule(rule_id)
+    return RedirectResponse("/learning", status_code=303)
+
+
+@app.post("/learning/patterns/accept")
+async def accept_pattern(
+    request: Request,
+    source_pattern: Annotated[str, Form()] = "",
+    description: Annotated[str, Form()] = "",
+    prompt_text: Annotated[str, Form()] = "",
+):
+    """Accept a detected pattern as a correction rule."""
+    if source_pattern and prompt_text:
+        state.db.add_rule("auto", description, prompt_text, source_pattern=source_pattern, auto_generated=True)
+    return RedirectResponse("/learning", status_code=303)
 
 
 # ---------------------------------------------------------------------------

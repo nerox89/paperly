@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Lernen — paperly{% endblock %}
+
+{% block content %}
+<div class="space-y-6 animate-in">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-mono font-bold text-slate-100">🧠 Self-Learning</h1>
+      <p class="text-sm text-slate-400 mt-1">
+        Paperly lernt aus deinen Korrekturen. {{ feedback_count }} Dokumente verarbeitet.
+      </p>
+    </div>
+  </div>
+
+  {% if stats.total == 0 %}
+  <!-- Empty state -->
+  <div class="glass rounded-xl p-12 text-center">
+    <div class="text-5xl mb-4">📊</div>
+    <h2 class="text-lg font-semibold text-slate-200 mb-2">Noch keine Daten</h2>
+    <p class="text-sm text-slate-400 max-w-md mx-auto">
+      Sobald du Dokumente klassifizierst und Vorschläge annimmst oder korrigierst,
+      lernt Paperly aus deinem Feedback und verbessert zukünftige Vorschläge.
+    </p>
+  </div>
+  {% else %}
+
+  <!-- Stats Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="glass rounded-xl p-4 text-center">
+      <div class="text-2xl font-bold font-mono text-cyan-400">{{ stats.total }}</div>
+      <div class="text-xs text-slate-400 mt-1">Gesamt verarbeitet</div>
+    </div>
+    <div class="glass rounded-xl p-4 text-center">
+      <div class="text-2xl font-bold font-mono text-green-400">{{ stats.accepted }}</div>
+      <div class="text-xs text-slate-400 mt-1">Akzeptiert ({{ stats.accepted_pct }}%)</div>
+    </div>
+    <div class="glass rounded-xl p-4 text-center">
+      <div class="text-2xl font-bold font-mono text-amber-400">{{ stats.modified }}</div>
+      <div class="text-xs text-slate-400 mt-1">Korrigiert ({{ stats.modified_pct }}%)</div>
+    </div>
+    <div class="glass rounded-xl p-4 text-center">
+      <div class="text-2xl font-bold font-mono text-violet-400">{{ stats.overall_accuracy }}%</div>
+      <div class="text-xs text-slate-400 mt-1">Gesamt-Genauigkeit</div>
+    </div>
+  </div>
+
+  <!-- Per-field accuracy -->
+  <div class="glass rounded-xl p-6 space-y-4">
+    <h2 class="text-lg font-mono font-semibold text-slate-200">Genauigkeit pro Feld</h2>
+    <p class="text-xs text-slate-400">Wie oft akzeptiert der Nutzer den KI-Vorschlag ohne Änderung?</p>
+
+    {% set fields = [
+      ('Titel', stats.title_accuracy, 'cyan'),
+      ('Absender', stats.correspondent_accuracy, 'violet'),
+      ('Dokumenttyp', stats.document_type_accuracy, 'green'),
+      ('Speicherpfad', stats.storage_path_accuracy, 'amber'),
+      ('Tags', stats.tags_accuracy, 'rose'),
+    ] %}
+    {% for label, pct, color in fields %}
+    <div class="flex items-center gap-3">
+      <span class="text-xs text-slate-400 w-28 shrink-0">{{ label }}</span>
+      <div class="flex-1 progress-neon">
+        <div class="fill {% if color == 'cyan' %}{% elif color == 'violet' %}{% endif %}"
+             style="width: {{ pct }}%;
+                    {% if color == 'violet' %}background: linear-gradient(90deg, #7c3aed, #a78bfa); box-shadow: 0 0 10px rgba(139,92,246,0.4);
+                    {% elif color == 'green' %}background: linear-gradient(90deg, #059669, #10b981); box-shadow: 0 0 10px rgba(16,185,129,0.4);
+                    {% elif color == 'amber' %}background: linear-gradient(90deg, #d97706, #f59e0b); box-shadow: 0 0 10px rgba(245,158,11,0.4);
+                    {% elif color == 'rose' %}background: linear-gradient(90deg, #e11d48, #f43f5e); box-shadow: 0 0 10px rgba(244,63,94,0.4);
+                    {% endif %}">
+        </div>
+      </div>
+      <span class="text-xs font-mono text-slate-300 w-12 text-right">{{ pct }}%</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Top Corrections -->
+  {% if corrections %}
+  <div class="glass rounded-xl p-6 space-y-4">
+    <h2 class="text-lg font-mono font-semibold text-slate-200">Häufigste Korrekturen</h2>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-xs text-slate-500 uppercase tracking-wider">
+            <th class="text-left py-2 px-3">Feld</th>
+            <th class="text-left py-2 px-3">KI schlug vor</th>
+            <th class="text-left py-2 px-3">Nutzer wählte</th>
+            <th class="text-right py-2 px-3">Anzahl</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in corrections %}
+          <tr class="border-t border-white/5">
+            <td class="py-2 px-3">
+              <span class="chip {% if c.type == 'correspondent' %}chip-violet{% else %}chip-green{% endif %}">
+                {{ 'Absender' if c.type == 'correspondent' else 'Dokumenttyp' }}
+              </span>
+            </td>
+            <td class="py-2 px-3 text-slate-300">{{ c.from_name }}</td>
+            <td class="py-2 px-3 text-slate-200 font-medium">{{ c.to_name }}</td>
+            <td class="py-2 px-3 text-right font-mono text-slate-400">{{ c.count }}×</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% endif %}
+
+  <!-- Detected Patterns (suggestions for new rules) -->
+  {% if new_patterns %}
+  <div class="glass rounded-xl p-6 border border-amber-500/20 space-y-4">
+    <h2 class="text-lg font-mono font-semibold text-amber-300">💡 Erkannte Muster</h2>
+    <p class="text-xs text-slate-400">
+      Diese Korrekturmuster wurden erkannt. Akzeptiere sie als Regeln, um zukünftige Klassifizierungen zu verbessern.
+    </p>
+    {% for p in new_patterns %}
+    <div class="flex items-center gap-3 p-3 rounded-lg bg-white/5">
+      <div class="flex-1">
+        <span class="chip {% if p.rule_type == 'correspondent' %}chip-violet{% else %}chip-green{% endif %} text-xs">
+          {{ 'Absender' if p.rule_type == 'correspondent' else 'Dokumenttyp' }}
+        </span>
+        <span class="text-sm text-slate-300 ml-2">
+          ID {{ p.from_id }} → ID {{ p.to_id }}
+          <span class="text-slate-500">({{ p.count }}× korrigiert)</span>
+        </span>
+      </div>
+      <form method="post" action="/learning/patterns/accept">
+        <input type="hidden" name="source_pattern" value="{{ p.source_pattern }}">
+        <input type="hidden" name="description"
+               value="Auto: {{ p.rule_type }} {{ p.from_id }} → {{ p.to_id }} ({{ p.count }}× korrigiert)">
+        <input type="hidden" name="prompt_text"
+               value="Wenn du {{ 'Absender' if p.rule_type == 'correspondent' else 'Dokumenttyp' }} ID {{ p.from_id }} vorschlagen würdest, verwende stattdessen ID {{ p.to_id }}.">
+        <button type="submit" class="btn-neon text-xs px-3 py-1">Übernehmen</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Active Rules -->
+  <div class="glass rounded-xl p-6 space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-mono font-semibold text-slate-200">📏 Korrekturregeln</h2>
+      <span class="text-xs text-slate-500">{{ rules | length }} Regeln</span>
+    </div>
+
+    {% if rules %}
+    <div class="space-y-2">
+      {% for r in rules %}
+      <div class="flex items-center gap-3 p-3 rounded-lg {% if r.active %}bg-white/5{% else %}bg-white/[0.02] opacity-50{% endif %}">
+        <div class="flex-1">
+          <div class="text-sm {% if r.active %}text-slate-200{% else %}text-slate-500{% endif %}">
+            {{ r.description }}
+          </div>
+          <div class="text-xs text-slate-500 mt-0.5 font-mono">
+            {{ r.prompt_text[:80] }}{% if r.prompt_text | length > 80 %}…{% endif %}
+            · {{ r.hit_count }}× verwendet
+            {% if r.auto_generated %}<span class="chip-amber text-xs ml-1">auto</span>{% endif %}
+          </div>
+        </div>
+        <form method="post" action="/learning/rules/{{ r.id }}/toggle" class="inline">
+          <button type="submit" class="btn-ghost text-xs px-2 py-1" title="{{ 'Deaktivieren' if r.active else 'Aktivieren' }}">
+            {{ '✅' if r.active else '❌' }}
+          </button>
+        </form>
+        <form method="post" action="/learning/rules/{{ r.id }}/delete" class="inline"
+              onsubmit="return confirm('Regel löschen?')">
+          <button type="submit" class="btn-ghost text-xs px-2 py-1 text-rose-400" title="Löschen">🗑</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm text-slate-500">Keine Regeln vorhanden. Regeln werden automatisch erkannt oder können manuell erstellt werden.</p>
+    {% endif %}
+
+    <!-- Add manual rule -->
+    <details class="mt-4">
+      <summary class="text-sm text-cyan-400 cursor-pointer hover:text-cyan-300">+ Manuelle Regel erstellen</summary>
+      <form method="post" action="/learning/rules/add" class="mt-3 space-y-3">
+        <div>
+          <label class="block text-xs font-mono text-slate-500 mb-1">Regeltyp</label>
+          <select name="rule_type" class="input-dark">
+            <option value="general">Allgemein</option>
+            <option value="correspondent">Absender</option>
+            <option value="document_type">Dokumenttyp</option>
+            <option value="tag">Tag</option>
+            <option value="storage_path">Speicherpfad</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-mono text-slate-500 mb-1">Beschreibung</label>
+          <input type="text" name="description" class="input-dark"
+                 placeholder="z.B.: Sparkasse-Dokumente immer mit Tag 'Bank'">
+        </div>
+        <div>
+          <label class="block text-xs font-mono text-slate-500 mb-1">Prompt-Text (wird an KI gesendet)</label>
+          <textarea name="prompt_text" rows="2" class="input-dark font-mono text-xs"
+                    placeholder="z.B.: Dokumente der Sparkasse Lübeck sollen immer den Tag 'Bank' (ID 5) erhalten."></textarea>
+        </div>
+        <button type="submit" class="btn-neon text-sm">Regel speichern</button>
+      </form>
+    </details>
+  </div>
+
+</div>
+{% endblock %}
