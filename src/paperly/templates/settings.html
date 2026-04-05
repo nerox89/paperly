@@ -125,12 +125,17 @@ function toggleProviderPanels() {
 async function testOllama() {
   const btn = document.getElementById('test-btn');
   const result = document.getElementById('test-result');
+  const url = document.querySelector('input[name="ollama_url"]').value.trim();
   btn.disabled = true;
   btn.textContent = '...';
   result.classList.add('hidden');
 
   try {
-    const resp = await fetch('/settings/test-ollama', { method: 'POST' });
+    const resp = await fetch('/settings/test-ollama', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url })
+    });
     const data = await resp.json();
     result.classList.remove('hidden');
     if (data.ok) {

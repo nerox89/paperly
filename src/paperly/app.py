@@ -749,7 +749,14 @@ async def settings_save(
 @app.post("/settings/test-ollama")
 async def test_ollama(request: Request):
     """Test Ollama connectivity and return status."""
-    url = state.db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434"))
+    # Accept URL from form body or fall back to stored setting
+    try:
+        body = await request.json()
+        url = body.get("url", "").strip()
+    except Exception:
+        url = ""
+    if not url:
+        url = state.db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434"))
     try:
         provider = OllamaProvider(base_url=url)
         info = await provider.test_connection()
