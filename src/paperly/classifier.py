@@ -166,7 +166,15 @@ class AnthropicProvider(BaseProvider):
                 logger.error("Anthropic API error (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
                 last_error = e
                 if attempt < MAX_RETRIES:
-                    time.sleep(RETRY_BASE_DELAY * attempt)
+                    # Rate limit (429): wait longer using retry-after or 60s default
+                    if getattr(e, 'status_code', 0) == 429:
+                        retry_after = 60
+                        if hasattr(e, 'response') and e.response is not None:
+                            retry_after = int(e.response.headers.get("retry-after", 60))
+                        logger.info("Rate limited — waiting %ds before retry", retry_after)
+                        time.sleep(retry_after)
+                    else:
+                        time.sleep(RETRY_BASE_DELAY * attempt)
                     continue
                 raise
         raise last_error  # type: ignore[misc]

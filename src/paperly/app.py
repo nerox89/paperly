@@ -35,7 +35,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-BATCH_CONCURRENCY = int(os.environ.get("PAPERLY_BATCH_CONCURRENCY", "3"))
+BATCH_CONCURRENCY = int(os.environ.get("PAPERLY_BATCH_CONCURRENCY", "1"))
 AUTO_APPLY_MIN_CONFIDENCE = float(os.environ.get("PAPERLY_AUTO_APPLY_CONFIDENCE", "0.85"))
 
 # ---------------------------------------------------------------------------
