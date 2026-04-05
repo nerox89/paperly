@@ -189,7 +189,7 @@ class OllamaProvider(BaseProvider):
 
         # Try with thinking first (better quality), then fall back to no-think (reliable JSON)
         for use_think in (True, False):
-            retries = MAX_RETRIES if use_think else 1
+            retries = MAX_RETRIES if use_think else MAX_RETRIES
             for attempt in range(1, retries + 1):
                 try:
                     raw = await self._ollama_call(system, user_message, think=use_think)
@@ -418,7 +418,12 @@ def _build_user_message(content: str, taxonomy: Taxonomy, original_title: str, f
         parts.append(f"## Dateiname\n{filename}")
 
     parts.append(f"## OCR-Text des Dokuments\n{content}")
-    parts.append("Bitte klassifiziere dieses Dokument anhand des OCR-Textes und der vorhandenen Taxonomie.")
+    parts.append(
+        "Bitte klassifiziere dieses Dokument anhand des OCR-Textes und der vorhandenen Taxonomie.\n\n"
+        "WICHTIG: Antworte ausschließlich mit einem einzigen JSON-Objekt. "
+        "Kein Markdown, keine Erklärungen, kein Text vor oder nach dem JSON. "
+        "Beginne deine Antwort mit { und ende mit }."
+    )
 
     return "\n\n".join(parts)
 
