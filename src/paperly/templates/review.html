@@ -148,7 +148,16 @@
       </div>
 
       <!-- Actions -->
-      <div class="flex-shrink-0 self-center">
+      <div class="flex-shrink-0 self-center flex items-center gap-2">
+        <button hx-post="/cache/clear/{{ doc.id }}"
+                hx-target="closest .glass"
+                hx-swap="outerHTML"
+                hx-confirm="Vorschlag für dieses Dokument zurücksetzen?"
+                class="text-xs text-slate-500 hover:text-rose-400 transition-colors px-2 py-1 rounded hover:bg-rose-500/10"
+                title="Vorschlag zurücksetzen"
+                aria-label="Vorschlag zurücksetzen">
+          🔄
+        </button>
         <a href="/document/{{ doc.id }}" class="btn-ghost text-xs">Bearbeiten</a>
       </div>
 

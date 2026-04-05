@@ -445,6 +445,11 @@ async def _run_batch(doc_ids: list[int]) -> None:
                 break
             await asyncio.sleep(0.2)
 
+    # Cancel any in-flight tasks on abort
+    if state.batch_cancel and pending_tasks:
+        for t in pending_tasks:
+            t.cancel()
+
     # Wait for remaining in-flight tasks
     if pending_tasks:
         await asyncio.gather(*pending_tasks, return_exceptions=True)
@@ -754,6 +759,16 @@ async def clear_cache(request: Request):
     """Clear all cached suggestions."""
     state.db.clear_all_suggestions()
     referer = request.headers.get("referer", "/")
+    return RedirectResponse(referer, status_code=303)
+
+
+@app.post("/cache/clear/{doc_id}")
+async def clear_suggestion_cache(request: Request, doc_id: int):
+    """Clear cached suggestion for a single document."""
+    state.db.clear_suggestion(doc_id)
+    if request.headers.get("HX-Request"):
+        return HTMLResponse("")
+    referer = request.headers.get("referer", "/review")
     return RedirectResponse(referer, status_code=303)
 
 
