@@ -1,12 +1,50 @@
-# Local development only — server uses standalone docker run
+# Paperly — standalone deployment
+# Copy .env.example to .env, fill in the required variables, then run:
+#   docker compose up -d
+
 services:
   paperly:
-    build: .
+    image: ghcr.io/nerox89/paperly:latest
+    container_name: paperly
+    restart: unless-stopped
     ports:
-      - "8002:8002"
+      - "${PAPERLY_PORT:-8002}:8002"
     environment:
-      - PAPERLESS_URL=${PAPERLESS_URL:-http://localhost:18000}
+      # Required
+      - PAPERLESS_URL=${PAPERLESS_URL}
       - PAPERLESS_TOKEN=${PAPERLESS_TOKEN}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # AI backend — choose claude or ollama
+      - PAPERLY_AI_PROVIDER=${PAPERLY_AI_PROVIDER:-claude}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - PAPERLY_CLAUDE_MODEL=${PAPERLY_CLAUDE_MODEL:-claude-haiku-4-5}
+      - PAPERLY_OLLAMA_URL=${PAPERLY_OLLAMA_URL:-http://ollama:11434}
+      - PAPERLY_OLLAMA_MODEL=${PAPERLY_OLLAMA_MODEL:-gemma4:e4b}
+      # Optional
+      - PAPERLY_AUTO_APPLY_CONFIDENCE=${PAPERLY_AUTO_APPLY_CONFIDENCE:-0.85}
+      - PAPERLY_BATCH_CONCURRENCY=${PAPERLY_BATCH_CONCURRENCY:-3}
+      - PAPERLY_DATA_DIR=/data
+      - PAPERLY_PAPERLESS_PUBLIC_URL=${PAPERLY_PAPERLESS_PUBLIC_URL:-}
+    volumes:
+      - paperly_data:/data
+    # Attach to the same Docker network as Paperless-NGX so PAPERLESS_URL resolves
+    # networks:
+    #   - paperless_default
     env_file:
       - .env
+
+  # Uncomment if you want Ollama bundled (requires a GPU or patience)
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+
+volumes:
+  paperly_data:
+  # ollama_data:
+
+# Uncomment and set the network name to match your Paperless-NGX compose network
+# networks:
+#   paperless_default:
+#     external: true
