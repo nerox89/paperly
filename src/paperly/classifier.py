@@ -1,20 +1,21 @@
-"""Claude AI classifier for Paperless-NGX documents."""
+"""AI classifier for Paperless-NGX documents — multi-provider."""
 
 from __future__ import annotations
 
+import abc
+import asyncio
 import json
 import logging
 import re
 import time
 from dataclasses import dataclass, field
 
-import anthropic
+import httpx
 
 from paperly.paperless import Taxonomy
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-haiku-4-5"
 MAX_CONTENT_CHARS = 6000
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
@@ -75,9 +76,156 @@ class ClassificationResult:
     new_tags: list[str] = field(default_factory=list)
 
 
-class Classifier:
-    def __init__(self, api_key: str) -> None:
+# ---------------------------------------------------------------------------
+# Provider abstraction
+# ---------------------------------------------------------------------------
+
+class BaseProvider(abc.ABC):
+    """Abstract base for LLM providers — returns raw parsed JSON dict."""
+
+    @property
+    @abc.abstractmethod
+    def name(self) -> str: ...
+
+    @property
+    @abc.abstractmethod
+    def model(self) -> str: ...
+
+    @abc.abstractmethod
+    async def generate(self, system: str, user_message: str) -> dict:
+        """Send prompt to LLM and return parsed JSON dict."""
+        ...
+
+
+class AnthropicProvider(BaseProvider):
+    """Claude via the Anthropic SDK (synchronous under the hood)."""
+
+    def __init__(self, api_key: str, model: str = "claude-haiku-4-5") -> None:
+        import anthropic
         self._client = anthropic.Anthropic(api_key=api_key)
+        self._model = model
+
+    @property
+    def name(self) -> str:
+        return "claude"
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    async def generate(self, system: str, user_message: str) -> dict:
+        # Anthropic SDK is synchronous — run in thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._call, system, user_message)
+
+    def _call(self, system: str, user_message: str) -> dict:
+        import anthropic
+        last_error: Exception | None = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._client.messages.create(
+                    model=self._model,
+                    max_tokens=600,
+                    system=system,
+                    messages=[{"role": "user", "content": user_message}],
+                )
+                raw = response.content[0].text.strip()
+                return _parse_json_response(raw)
+            except json.JSONDecodeError as e:
+                logger.warning("Claude returned invalid JSON (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_BASE_DELAY * attempt)
+                    continue
+                raise
+            except anthropic.APIError as e:
+                logger.error("Anthropic API error (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_BASE_DELAY * attempt)
+                    continue
+                raise
+        raise last_error  # type: ignore[misc]
+
+
+class OllamaProvider(BaseProvider):
+    """Local Ollama instance via REST API."""
+
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "gemma4:e4b") -> None:
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+
+    @property
+    def name(self) -> str:
+        return "ollama"
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    async def generate(self, system: str, user_message: str) -> dict:
+        last_error: Exception | None = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    resp = await client.post(
+                        f"{self._base_url}/api/chat",
+                        json={
+                            "model": self._model,
+                            "messages": [
+                                {"role": "system", "content": system},
+                                {"role": "user", "content": user_message},
+                            ],
+                            "format": "json",
+                            "stream": False,
+                            "options": {"num_predict": 600},
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    raw = data["message"]["content"].strip()
+                    return _parse_json_response(raw)
+            except json.JSONDecodeError as e:
+                logger.warning("Ollama returned invalid JSON (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_BASE_DELAY * attempt)
+                    continue
+                raise
+            except httpx.HTTPError as e:
+                logger.error("Ollama HTTP error (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_BASE_DELAY * attempt)
+                    continue
+                raise
+        raise last_error  # type: ignore[misc]
+
+    async def test_connection(self) -> dict:
+        """Test connectivity and return available model info."""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{self._base_url}/api/tags")
+            resp.raise_for_status()
+            data = resp.json()
+            models = [m["name"] for m in data.get("models", [])]
+            return {"ok": True, "models": models, "url": self._base_url}
+
+
+# ---------------------------------------------------------------------------
+# Classifier (orchestrator)
+# ---------------------------------------------------------------------------
+
+class Classifier:
+    def __init__(self, provider: BaseProvider) -> None:
+        self._provider = provider
+
+    @property
+    def provider(self) -> BaseProvider:
+        return self._provider
+
+    @provider.setter
+    def provider(self, p: BaseProvider) -> None:
+        self._provider = p
 
     async def classify(
         self,
@@ -91,40 +239,12 @@ class Classifier:
         truncated = _smart_truncate(content, MAX_CONTENT_CHARS)
         user_message = _build_user_message(truncated, taxonomy, original_title, filename)
 
-        last_error: Exception | None = None
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                response = self._client.messages.create(
-                    model=MODEL,
-                    max_tokens=600,
-                    system=SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": user_message}],
-                )
-                raw = response.content[0].text.strip()
-                # Strip markdown code fences if Claude wraps the JSON
-                if raw.startswith("```"):
-                    raw = raw.split("```", 2)[1]
-                    if raw.startswith("json"):
-                        raw = raw[4:]
-                    raw = raw.rstrip("`").strip()
-                data = json.loads(raw)
-                break
-            except json.JSONDecodeError as e:
-                logger.warning("Claude returned invalid JSON (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
-                last_error = e
-                if attempt < MAX_RETRIES:
-                    time.sleep(RETRY_BASE_DELAY * attempt)
-                    continue
-                return _fallback_result(original_title, "Ungültiges JSON von Claude.")
-            except anthropic.APIError as e:
-                logger.error("Anthropic API error (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
-                last_error = e
-                if attempt < MAX_RETRIES:
-                    time.sleep(RETRY_BASE_DELAY * attempt)
-                    continue
-                return _fallback_result(original_title, f"API-Fehler: {e}")
+        try:
+            data = await self._provider.generate(SYSTEM_PROMPT, user_message)
+        except Exception as e:
+            logger.error("Classification failed (%s/%s): %s", self._provider.name, self._provider.model, e)
+            return _fallback_result(original_title, f"Fehler ({self._provider.name}): {e}")
 
-        # Normalise created date
         created = _normalise_date(data.get("created"))
 
         result = ClassificationResult(
@@ -140,26 +260,37 @@ class Classifier:
             new_tags=data.get("new_tags") or [],
         )
 
-        # Validate returned IDs and fuzzy-match correspondents
         result = _validate_ids(result, taxonomy)
         result = _fuzzy_match_correspondent(result, taxonomy)
         return result
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _parse_json_response(raw: str) -> dict:
+    """Parse JSON from LLM response, stripping markdown fences if present."""
+    if raw.startswith("```"):
+        raw = raw.split("```", 2)[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.rstrip("`").strip()
+    return json.loads(raw)
 
 
 def _smart_truncate(content: str, max_chars: int) -> str:
     """Truncate content keeping beginning and end (important info is usually there)."""
     if len(content) <= max_chars:
         return content
-    # Keep 70% from start, 30% from end
     head_size = int(max_chars * 0.7)
-    tail_size = max_chars - head_size - 50  # 50 chars for separator
+    tail_size = max_chars - head_size - 50
     head = content[:head_size]
     tail = content[-tail_size:]
     return f"{head}\n\n[... {len(content) - head_size - tail_size} Zeichen übersprungen ...]\n\n{tail}"
 
 
 def _build_user_message(content: str, taxonomy: Taxonomy, original_title: str, filename: str = "") -> str:
-    # Build taxonomy reference lists for Claude
     corr_list = "\n".join(
         f"  {c.id}: {c.name}" for c in sorted(taxonomy.correspondents, key=lambda x: x.name)
     )
@@ -210,16 +341,13 @@ def _normalise_date(raw: str | None) -> str | None:
 
     raw = raw.strip()
 
-    # Already YYYY-MM-DD
     if re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
         return raw
 
-    # DD.MM.YYYY
     m = re.match(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$", raw)
     if m:
         return f"{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}"
 
-    # "März 2024" or "15. März 2024"
     for month_name, month_num in _GERMAN_MONTHS.items():
         if month_name in raw.lower():
             year_m = re.search(r"(\d{4})", raw)
@@ -228,7 +356,6 @@ def _normalise_date(raw: str | None) -> str | None:
                 day = day_m.group(1).zfill(2) if day_m else "01"
                 return f"{year_m.group(1)}-{month_num}-{day}"
 
-    # MM/YYYY
     m = re.match(r"^(\d{1,2})/(\d{4})$", raw)
     if m:
         return f"{m.group(2)}-{m.group(1).zfill(2)}-01"
@@ -241,7 +368,7 @@ def _normalise_date(raw: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 def _fuzzy_match_correspondent(result: ClassificationResult, taxonomy: Taxonomy) -> ClassificationResult:
-    """If Claude suggested a new correspondent name, check if a similar one already exists."""
+    """If the LLM suggested a new correspondent name, check if a similar one already exists."""
     if result.correspondent_id is not None or not result.correspondent_name:
         return result
 
@@ -249,11 +376,9 @@ def _fuzzy_match_correspondent(result: ClassificationResult, taxonomy: Taxonomy)
 
     for c in taxonomy.correspondents:
         existing = c.name.lower().strip()
-        # Exact match (case-insensitive)
         if suggested == existing:
             result.correspondent_id = c.id
             return result
-        # One contains the other (e.g., "Sparkasse" matches "Sparkasse Lübeck")
         if suggested in existing or existing in suggested:
             logger.info(
                 "Fuzzy matched correspondent: '%s' → '%s' (id=%d)",
@@ -285,7 +410,7 @@ def _validate_ids(result: ClassificationResult, taxonomy: Taxonomy) -> Classific
     if result.correspondent_id is not None:
         if not taxonomy.correspondent_by_id(result.correspondent_id):
             logger.warning(
-                "Claude returned unknown correspondent_id=%d, clearing",
+                "LLM returned unknown correspondent_id=%d, clearing",
                 result.correspondent_id,
             )
             result.correspondent_id = None
@@ -293,7 +418,7 @@ def _validate_ids(result: ClassificationResult, taxonomy: Taxonomy) -> Classific
     if result.document_type_id is not None:
         if not taxonomy.document_type_by_id(result.document_type_id):
             logger.warning(
-                "Claude returned unknown document_type_id=%d, clearing",
+                "LLM returned unknown document_type_id=%d, clearing",
                 result.document_type_id,
             )
             result.document_type_id = None
@@ -301,7 +426,7 @@ def _validate_ids(result: ClassificationResult, taxonomy: Taxonomy) -> Classific
     valid_tag_ids = {t.id for t in taxonomy.tags}
     invalid_tags = [tid for tid in result.tag_ids if tid not in valid_tag_ids]
     if invalid_tags:
-        logger.warning("Claude returned unknown tag_ids=%s, removing", invalid_tags)
+        logger.warning("LLM returned unknown tag_ids=%s, removing", invalid_tags)
         result.tag_ids = [tid for tid in result.tag_ids if tid in valid_tag_ids]
 
     return result

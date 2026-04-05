@@ -55,6 +55,10 @@ class Database:
                 new_values_json TEXT,
                 created_at TEXT DEFAULT (datetime('now'))
             );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
 
     # ------------------------------------------------------------------
@@ -152,3 +156,27 @@ class Database:
             }
             for r in rows
         ]
+
+    # ------------------------------------------------------------------
+    # Settings (key-value store)
+    # ------------------------------------------------------------------
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        assert self._conn
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        assert self._conn
+        self._conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        self._conn.commit()
+
+    def get_all_settings(self) -> dict[str, str]:
+        assert self._conn
+        rows = self._conn.execute("SELECT key, value FROM settings").fetchall()
+        return {r["key"]: r["value"] for r in rows}

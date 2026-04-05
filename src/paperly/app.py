@@ -16,7 +16,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from paperly.classifier import Classifier, ClassificationResult
+from paperly.classifier import (
+    AnthropicProvider,
+    BaseProvider,
+    Classifier,
+    ClassificationResult,
+    OllamaProvider,
+)
 from paperly.database import Database
 from paperly.paperless import Document, PaperlessClient, Taxonomy
 
@@ -59,20 +65,38 @@ class AppState:
 state = AppState()
 
 
+def _build_provider(db: Database) -> BaseProvider:
+    """Build the active LLM provider from DB settings + env vars."""
+    provider_name = db.get_setting("ai_provider", os.environ.get("PAPERLY_AI_PROVIDER", "claude"))
+
+    if provider_name == "ollama":
+        url = db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434"))
+        model = db.get_setting("ollama_model", os.environ.get("PAPERLY_OLLAMA_MODEL", "gemma4:e4b"))
+        logger.info("Using Ollama provider: %s model=%s", url, model)
+        return OllamaProvider(base_url=url, model=model)
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        model = db.get_setting("claude_model", os.environ.get("PAPERLY_CLAUDE_MODEL", "claude-haiku-4-5"))
+        logger.info("Using Anthropic provider: model=%s", model)
+        return AnthropicProvider(api_key=api_key, model=model)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     paperless_url = os.environ["PAPERLESS_URL"]
     paperless_token = os.environ["PAPERLESS_TOKEN"]
-    anthropic_key = os.environ["ANTHROPIC_API_KEY"]
 
     state.paperless = PaperlessClient(paperless_url, paperless_token)
     await state.paperless.open()
-    state.classifier = Classifier(anthropic_key)
 
-    # SQLite database for persistent cache and history
+    # SQLite database for persistent cache, history, and settings
     data_dir = os.environ.get("PAPERLY_DATA_DIR", ".")
     state.db = Database(Path(data_dir) / "paperly.db")
     state.db.open()
+
+    # Build classifier with provider from settings
+    provider = _build_provider(state.db)
+    state.classifier = Classifier(provider)
 
     state.taxonomy = await state.paperless.get_taxonomy()
 
@@ -85,6 +109,7 @@ async def lifespan(app: FastAPI):
         state.taxonomy.inbox_tag_id,
     )
     logger.info("Cached suggestions: %d", state.db.suggestion_count())
+    logger.info("AI provider: %s / %s", state.classifier.provider.name, state.classifier.provider.model)
     yield
     state.db.close()
     await state.paperless.close()
@@ -659,6 +684,78 @@ async def history_view(request: Request):
             "history.html",
             {"entries": entries, "taxonomy": state.taxonomy},
     )
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_view(request: Request):
+    """Settings page — AI provider configuration."""
+    current = {
+        "ai_provider": state.db.get_setting("ai_provider", os.environ.get("PAPERLY_AI_PROVIDER", "claude")),
+        "claude_model": state.db.get_setting("claude_model", os.environ.get("PAPERLY_CLAUDE_MODEL", "claude-haiku-4-5")),
+        "ollama_url": state.db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434")),
+        "ollama_model": state.db.get_setting("ollama_model", os.environ.get("PAPERLY_OLLAMA_MODEL", "gemma4:e4b")),
+    }
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {
+            "settings": current,
+            "active_provider": state.classifier.provider.name,
+            "active_model": state.classifier.provider.model,
+        },
+    )
+
+
+@app.post("/settings", response_class=HTMLResponse)
+async def settings_save(
+    request: Request,
+    ai_provider: Annotated[str, Form()],
+    claude_model: Annotated[str, Form()] = "claude-haiku-4-5",
+    ollama_url: Annotated[str, Form()] = "http://localhost:11434",
+    ollama_model: Annotated[str, Form()] = "gemma4:e4b",
+):
+    """Save settings and switch provider."""
+    state.db.set_setting("ai_provider", ai_provider)
+    state.db.set_setting("claude_model", claude_model)
+    state.db.set_setting("ollama_url", ollama_url)
+    state.db.set_setting("ollama_model", ollama_model)
+
+    # Rebuild provider at runtime
+    provider = _build_provider(state.db)
+    state.classifier.provider = provider
+
+    current = {
+        "ai_provider": ai_provider,
+        "claude_model": claude_model,
+        "ollama_url": ollama_url,
+        "ollama_model": ollama_model,
+    }
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {
+            "settings": current,
+            "active_provider": state.classifier.provider.name,
+            "active_model": state.classifier.provider.model,
+            "saved": True,
+        },
+    )
+
+
+@app.post("/settings/test-ollama")
+async def test_ollama(request: Request):
+    """Test Ollama connectivity and return status."""
+    url = state.db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434"))
+    try:
+        provider = OllamaProvider(base_url=url)
+        info = await provider.test_connection()
+        return JSONResponse(info)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
 
 
 # ---------------------------------------------------------------------------

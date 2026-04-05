@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Einstellungen — paperly{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-mono font-bold text-slate-100">KI-Einstellungen</h1>
+      <p class="text-sm text-slate-400 mt-1">
+        Aktiv: <span class="text-cyan-400 font-mono">{{ active_provider }}</span>
+        / <span class="text-violet-400 font-mono">{{ active_model }}</span>
+      </p>
+    </div>
+  </div>
+
+  {% if saved is defined and saved %}
+  <div class="glass rounded-lg p-4 border border-emerald-500/30 bg-emerald-500/10">
+    <p class="text-emerald-400 text-sm font-medium">✓ Einstellungen gespeichert — Provider gewechselt.</p>
+  </div>
+  {% endif %}
+
+  <!-- Settings Form -->
+  <form method="post" action="/settings" class="space-y-6">
+
+    <!-- Provider Selection -->
+    <div class="glass rounded-xl p-6 border border-white/5 space-y-4">
+      <h2 class="text-lg font-mono font-semibold text-slate-200">Provider</h2>
+
+      <div class="grid grid-cols-2 gap-3">
+        <label class="relative cursor-pointer">
+          <input type="radio" name="ai_provider" value="claude"
+                 {% if settings.ai_provider == 'claude' %}checked{% endif %}
+                 class="peer sr-only"
+                 onchange="toggleProviderPanels()">
+          <div class="glass rounded-lg p-4 border border-white/5 peer-checked:border-cyan-500/50 peer-checked:bg-cyan-500/10 transition-all">
+            <div class="font-mono font-semibold text-slate-200">☁ Claude</div>
+            <div class="text-xs text-slate-400 mt-1">Anthropic Cloud API</div>
+          </div>
+        </label>
+
+        <label class="relative cursor-pointer">
+          <input type="radio" name="ai_provider" value="ollama"
+                 {% if settings.ai_provider == 'ollama' %}checked{% endif %}
+                 class="peer sr-only"
+                 onchange="toggleProviderPanels()">
+          <div class="glass rounded-lg p-4 border border-white/5 peer-checked:border-violet-500/50 peer-checked:bg-violet-500/10 transition-all">
+            <div class="font-mono font-semibold text-slate-200">🏠 Ollama</div>
+            <div class="text-xs text-slate-400 mt-1">Lokales Modell (Gemma 4)</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Claude Settings -->
+    <div id="claude-settings" class="glass rounded-xl p-6 border border-white/5 space-y-4 {% if settings.ai_provider != 'claude' %}hidden{% endif %}">
+      <h2 class="text-lg font-mono font-semibold text-slate-200">Claude-Konfiguration</h2>
+      <div>
+        <label class="block text-sm font-medium text-slate-400 mb-1">Modell</label>
+        <select name="claude_model" class="input w-full bg-slate-800/60 border border-white/10 rounded-lg px-3 py-2 text-slate-200 font-mono text-sm focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20">
+          {% for m in ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-sonnet-4-5-20250514'] %}
+          <option value="{{ m }}" {% if settings.claude_model == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p class="text-xs text-slate-500">Benötigt: <code class="text-cyan-500/70">ANTHROPIC_API_KEY</code> Umgebungsvariable</p>
+    </div>
+
+    <!-- Ollama Settings -->
+    <div id="ollama-settings" class="glass rounded-xl p-6 border border-white/5 space-y-4 {% if settings.ai_provider != 'ollama' %}hidden{% endif %}">
+      <h2 class="text-lg font-mono font-semibold text-slate-200">Ollama-Konfiguration</h2>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-400 mb-1">Server URL</label>
+        <div class="flex gap-2">
+          <input type="text" name="ollama_url" value="{{ settings.ollama_url }}"
+                 class="input flex-1 bg-slate-800/60 border border-white/10 rounded-lg px-3 py-2 text-slate-200 font-mono text-sm focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20"
+                 placeholder="http://192.168.20.x:11434">
+          <button type="button" id="test-btn"
+                  onclick="testOllama()"
+                  class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-500/20 text-violet-300 border border-violet-500/30 hover:bg-violet-500/30 transition-colors">
+            Testen
+          </button>
+        </div>
+        <div id="test-result" class="mt-2 text-sm hidden"></div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-400 mb-1">Modell</label>
+        <input type="text" name="ollama_model" value="{{ settings.ollama_model }}"
+               class="input w-full bg-slate-800/60 border border-white/10 rounded-lg px-3 py-2 text-slate-200 font-mono text-sm focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20"
+               placeholder="gemma4:e4b">
+      </div>
+
+      <div class="glass rounded-lg p-4 border border-white/5 bg-slate-800/40">
+        <h3 class="text-sm font-mono font-semibold text-slate-300 mb-2">Empfohlene Modelle (Mac Mini M4 16GB)</h3>
+        <div class="space-y-1 text-xs text-slate-400">
+          <div><code class="text-violet-400">gemma4:e4b</code> — Gemma 4 E4B, ~6GB RAM (empfohlen)</div>
+          <div><code class="text-violet-400">gemma4:e2b</code> — Gemma 4 E2B, ~4GB RAM (schneller, kompakter)</div>
+          <div><code class="text-violet-400">gemma4:26b</code> — Gemma 4 26B MoE, ~18GB RAM (beste Qualität)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Save -->
+    <div class="flex justify-end">
+      <button type="submit"
+              class="px-6 py-2.5 rounded-lg text-sm font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/30 transition-colors">
+        Speichern & Anwenden
+      </button>
+    </div>
+
+  </form>
+
+</div>
+
+<script>
+function toggleProviderPanels() {
+  const provider = document.querySelector('input[name="ai_provider"]:checked')?.value;
+  document.getElementById('claude-settings').classList.toggle('hidden', provider !== 'claude');
+  document.getElementById('ollama-settings').classList.toggle('hidden', provider !== 'ollama');
+}
+
+async function testOllama() {
+  const btn = document.getElementById('test-btn');
+  const result = document.getElementById('test-result');
+  btn.disabled = true;
+  btn.textContent = '...';
+  result.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/settings/test-ollama', { method: 'POST' });
+    const data = await resp.json();
+    result.classList.remove('hidden');
+    if (data.ok) {
+      result.className = 'mt-2 text-sm text-emerald-400';
+      result.textContent = '✓ Verbunden — Modelle: ' + data.models.join(', ');
+    } else {
+      result.className = 'mt-2 text-sm text-rose-400';
+      result.textContent = '✗ Fehler: ' + data.error;
+    }
+  } catch (e) {
+    result.classList.remove('hidden');
+    result.className = 'mt-2 text-sm text-rose-400';
+    result.textContent = '✗ Verbindung fehlgeschlagen: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Testen';
+  }
+}
+</script>
+{% endblock %}
