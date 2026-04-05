@@ -189,19 +189,20 @@ class OllamaProvider(BaseProvider):
 
         # Try with thinking first (better quality), then fall back to no-think (reliable JSON)
         for use_think in (True, False):
-            retries = MAX_RETRIES if use_think else MAX_RETRIES
-            for attempt in range(1, retries + 1):
+            for attempt in range(1, MAX_RETRIES + 1):
                 try:
                     raw = await self._ollama_call(system, user_message, think=use_think)
-                    return _parse_json_response(raw)
-                except json.JSONDecodeError as e:
+                    parsed = _parse_json_response(raw)
+                    _validate_schema(parsed)
+                    return parsed
+                except (json.JSONDecodeError, ValueError) as e:
                     phase = "think" if use_think else "no-think"
                     logger.warning(
-                        "Ollama %s invalid JSON (attempt %d/%d): %s — raw: %.300s",
-                        phase, attempt, retries, e, raw if 'raw' in dir() else '(no raw)',
+                        "Ollama %s bad response (attempt %d/%d): %s — raw: %.300s",
+                        phase, attempt, MAX_RETRIES, e, raw if 'raw' in dir() else '(no raw)',
                     )
                     last_error = e
-                    if attempt < retries:
+                    if attempt < MAX_RETRIES:
                         await asyncio.sleep(RETRY_BASE_DELAY * attempt)
                         continue
                     if use_think:
@@ -209,7 +210,7 @@ class OllamaProvider(BaseProvider):
                 except httpx.HTTPError as e:
                     logger.error("Ollama HTTP error: %s", e)
                     last_error = e
-                    if attempt < retries:
+                    if attempt < MAX_RETRIES:
                         await asyncio.sleep(RETRY_BASE_DELAY * attempt)
                         continue
         raise last_error  # type: ignore[misc]
@@ -328,6 +329,16 @@ class Classifier:
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+def _validate_schema(data: dict) -> None:
+    """Ensure the LLM response has the expected classification schema keys."""
+    required = {"title", "confidence"}
+    missing = required - set(data.keys())
+    if missing:
+        raise ValueError(f"Response missing required keys: {missing}. Got keys: {list(data.keys())}")
+    if not isinstance(data.get("confidence"), (int, float)):
+        raise ValueError(f"confidence must be a number, got: {type(data.get('confidence'))}")
+
 
 def _extract_json_from_text(text: str) -> str:
     """Try to extract a JSON object from free-form text (e.g. thinking output)."""
