@@ -342,8 +342,11 @@ def _validate_schema(data: dict) -> None:
     missing = required - set(data.keys())
     if missing:
         raise ValueError(f"Response missing required keys: {missing}. Got keys: {list(data.keys())}")
-    if not isinstance(data.get("confidence"), (int, float)):
-        raise ValueError(f"confidence must be a number, got: {type(data.get('confidence'))}")
+    # Coerce confidence to float (Gemma sometimes returns it as string)
+    try:
+        data["confidence"] = float(data["confidence"])
+    except (TypeError, ValueError):
+        raise ValueError(f"confidence not numeric, got: {data.get('confidence')!r}")
 
 
 def _salvage_wrong_schema(data: dict) -> dict | None:
