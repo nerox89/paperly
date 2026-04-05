@@ -678,6 +678,7 @@ async def review_apply_all(request: Request, min_confidence: Annotated[float, Fo
                 created=suggestion.created,
                 correspondent=suggestion.correspondent_id,
                 document_type=suggestion.document_type_id,
+                storage_path=suggestion.storage_path_id,
                 tags=tags,
             )
             state.db.log_action(

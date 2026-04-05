@@ -115,7 +115,7 @@
     <select name="storage_path_id" id="sp-select" class="input-dark">
       <option value="">– keiner –</option>
       {% for sp in taxonomy.storage_paths | sort(attribute='name') %}
-      <option value="{{ sp.id }}" {% if doc.storage_path == sp.id %}selected{% endif %}>
+      <option value="{{ sp.id }}" {% if suggestion and suggestion.storage_path_id == sp.id %}selected{% elif not suggestion and doc.storage_path == sp.id %}selected{% endif %}>
         {{ sp.name }}
       </option>
       {% endfor %}

@@ -96,6 +96,7 @@ class ClassificationResult:
     reasoning: str
     raw_content_preview: str = ""
     new_tags: list[str] = field(default_factory=list)
+    storage_path_id: int | None = None
     provider_name: str = ""
     provider_model: str = ""
 
@@ -337,6 +338,7 @@ class Classifier:
             reasoning=data.get("reasoning", ""),
             raw_content_preview=truncated[:500],
             new_tags=data.get("new_tags") or [],
+            storage_path_id=data.get("storage_path_id"),
         )
 
         result = _validate_ids(result, taxonomy)
@@ -468,10 +470,16 @@ def _build_user_message(content: str, taxonomy: Taxonomy, original_title: str, f
         for dt in sorted(taxonomy.document_types, key=lambda x: x.name)
     )
 
+    sp_list = "\n".join(
+        f"  {sp.id}: {sp.name}"
+        for sp in sorted(taxonomy.storage_paths, key=lambda x: x.name)
+    )
+
     parts = [
         f"## Vorhandene Korrespondenten\n{corr_list}",
         f"## Vorhandene Tags\n{tag_list}",
         f"## Vorhandene Dokumenttypen\n{dt_list}",
+        f"## Vorhandene Speicherpfade\n{sp_list}",
         f"## Aktueller Titel des Dokuments\n{original_title or '(kein Titel)'}",
     ]
 
@@ -484,6 +492,7 @@ def _build_user_message(content: str, taxonomy: Taxonomy, original_title: str, f
         '{"title": "Kurzer Titel", "created": "YYYY-MM-DD", '
         '"correspondent_id": null, "correspondent_name": "Name", '
         '"tag_ids": [], "new_tags": [], "document_type_id": null, '
+        '"storage_path_id": null, '
         '"confidence": 0.85, "reasoning": "Begründung"}\n\n'
         "WICHTIG: Verwende exakt diese Schlüssel. Kein anderes Format."
     )
@@ -599,5 +608,13 @@ def _validate_ids(result: ClassificationResult, taxonomy: Taxonomy) -> Classific
     if invalid_tags:
         logger.warning("LLM returned unknown tag_ids=%s, removing", invalid_tags)
         result.tag_ids = [tid for tid in result.tag_ids if tid in valid_tag_ids]
+
+    if result.storage_path_id is not None:
+        if not taxonomy.storage_path_by_id(result.storage_path_id):
+            logger.warning(
+                "LLM returned unknown storage_path_id=%d, clearing",
+                result.storage_path_id,
+            )
+            result.storage_path_id = None
 
     return result
