@@ -407,15 +407,16 @@ async def _run_batch(doc_ids: list[int]) -> None:
     state.batch_log = []
 
     sem = asyncio.Semaphore(BATCH_CONCURRENCY)
+    pending_tasks: set[asyncio.Task] = set()
 
     async def _worker(doc_id: int) -> None:
-        if state.batch_cancel:
-            return
         async with sem:
             if state.batch_cancel:
                 return
             doc = await state.paperless.get_document(doc_id)
             state.batch_current_doc = doc.title or f"Doc #{doc_id}"
+            if state.batch_cancel:
+                return
             _, result = await _classify_one(doc)
 
             entry = {
@@ -433,8 +434,23 @@ async def _run_batch(doc_ids: list[int]) -> None:
                 state.batch_errors += 1
             state.batch_done += 1
 
-    tasks = [asyncio.create_task(_worker(did)) for did in doc_ids]
-    await asyncio.gather(*tasks, return_exceptions=True)
+    for did in doc_ids:
+        if state.batch_cancel:
+            break
+        task = asyncio.create_task(_worker(did))
+        pending_tasks.add(task)
+        task.add_done_callback(pending_tasks.discard)
+
+        # Limit how many tasks are created ahead (concurrency + small buffer)
+        while len(pending_tasks) >= BATCH_CONCURRENCY + 1:
+            if state.batch_cancel:
+                break
+            await asyncio.sleep(0.2)
+
+    # Wait for remaining in-flight tasks
+    if pending_tasks:
+        await asyncio.gather(*pending_tasks, return_exceptions=True)
+
     state.batch_running = False
     state.batch_current_doc = ""
     cancelled = state.batch_cancel
@@ -736,10 +752,11 @@ async def cleanup_execute(request: Request):
 # ---------------------------------------------------------------------------
 
 @app.post("/cache/clear")
-async def clear_cache():
+async def clear_cache(request: Request):
     """Clear all cached suggestions."""
     state.db.clear_all_suggestions()
-    return RedirectResponse("/", status_code=303)
+    referer = request.headers.get("referer", "/")
+    return RedirectResponse(referer, status_code=303)
 
 
 @app.get("/history")
