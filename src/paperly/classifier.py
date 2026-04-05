@@ -186,65 +186,73 @@ class OllamaProvider(BaseProvider):
 
     async def generate(self, system: str, user_message: str) -> dict:
         last_error: Exception | None = None
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                async with httpx.AsyncClient(timeout=240.0) as client:
-                    resp = await client.post(
-                        f"{self._base_url}/api/chat",
-                        json={
-                            "model": self._model,
-                            "messages": [
-                                {"role": "system", "content": system},
-                                {"role": "user", "content": user_message},
-                            ],
-                            "format": "json",
-                            "stream": False,
-                            "think": True,
-                            "options": {
-                                "num_predict": 4096,
-                                "temperature": 0.1,
-                            },
-                        },
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    msg = data.get("message", {})
-                    thinking = (msg.get("thinking", "") or "").strip()
-                    if thinking:
-                        logger.debug("Ollama thinking (%d chars): %.300s…", len(thinking), thinking)
-                    raw = (msg.get("content", "") or "").strip()
 
-                    # Some models with think+json put output only in thinking
-                    if not raw and thinking:
-                        logger.info("Ollama content empty, extracting JSON from thinking field")
-                        raw = _extract_json_from_text(thinking)
-
-                    if not raw:
-                        logger.warning(
-                            "Ollama empty response (attempt %d/%d). Keys: %s, content=%r, thinking=%d chars",
-                            attempt, MAX_RETRIES, list(msg.keys()), msg.get("content"), len(thinking),
-                        )
-                        raise json.JSONDecodeError("Empty response from Ollama", "", 0)
-                    logger.info("Ollama raw content (%d chars): %.500s", len(raw), raw)
+        # Try with thinking first (better quality), then fall back to no-think (reliable JSON)
+        for use_think in (True, False):
+            retries = MAX_RETRIES if use_think else 1
+            for attempt in range(1, retries + 1):
+                try:
+                    raw = await self._ollama_call(system, user_message, think=use_think)
                     return _parse_json_response(raw)
-            except json.JSONDecodeError as e:
-                logger.warning(
-                    "Ollama returned invalid JSON (attempt %d/%d): %s — raw content: %.300s",
-                    attempt, MAX_RETRIES, e, raw if 'raw' in dir() else '(no raw)',
-                )
-                last_error = e
-                if attempt < MAX_RETRIES:
-                    await asyncio.sleep(RETRY_BASE_DELAY * attempt)
-                    continue
-                raise
-            except httpx.HTTPError as e:
-                logger.error("Ollama HTTP error (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
-                last_error = e
-                if attempt < MAX_RETRIES:
-                    await asyncio.sleep(RETRY_BASE_DELAY * attempt)
-                    continue
-                raise
+                except json.JSONDecodeError as e:
+                    phase = "think" if use_think else "no-think"
+                    logger.warning(
+                        "Ollama %s invalid JSON (attempt %d/%d): %s — raw: %.300s",
+                        phase, attempt, retries, e, raw if 'raw' in dir() else '(no raw)',
+                    )
+                    last_error = e
+                    if attempt < retries:
+                        await asyncio.sleep(RETRY_BASE_DELAY * attempt)
+                        continue
+                    if use_think:
+                        logger.info("Thinking mode failed, retrying without think mode")
+                except httpx.HTTPError as e:
+                    logger.error("Ollama HTTP error: %s", e)
+                    last_error = e
+                    if attempt < retries:
+                        await asyncio.sleep(RETRY_BASE_DELAY * attempt)
+                        continue
         raise last_error  # type: ignore[misc]
+
+    async def _ollama_call(self, system: str, user_message: str, *, think: bool) -> str:
+        """Make a single Ollama API call and return the raw content string."""
+        async with httpx.AsyncClient(timeout=240.0) as client:
+            payload: dict = {
+                "model": self._model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_message},
+                ],
+                "format": "json",
+                "stream": False,
+                "options": {
+                    "num_predict": 4096 if think else 1024,
+                    "temperature": 0.1,
+                },
+            }
+            if think:
+                payload["think"] = True
+
+            resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            msg = data.get("message", {})
+            thinking = (msg.get("thinking", "") or "").strip()
+            if thinking:
+                logger.debug("Ollama thinking (%d chars): %.300s…", len(thinking), thinking)
+            raw = (msg.get("content", "") or "").strip()
+
+            # Fallback: extract JSON from thinking field
+            if not raw and thinking:
+                logger.info("Content empty, extracting JSON from thinking field")
+                raw = _extract_json_from_text(thinking)
+
+            if not raw:
+                logger.warning("Ollama empty response (think=%s), keys=%s", think, list(msg.keys()))
+                raise json.JSONDecodeError("Empty response from Ollama", "", 0)
+
+            logger.info("Ollama raw (think=%s, %d chars): %.200s", think, len(raw), raw)
+            return raw
 
     async def test_connection(self) -> dict:
         """Test connectivity and return available model info."""
