@@ -184,6 +184,11 @@ async def classify_document(request: Request, doc_id: int):
     """Trigger AI classification and return the suggestion partial (HTMX target)."""
     suggestion = state.db.get_suggestion(doc_id)
 
+    # Don't serve cached error results — reclassify instead
+    if suggestion is not None and suggestion.confidence <= 0.0:
+        state.db.clear_suggestion(doc_id)
+        suggestion = None
+
     if suggestion is None:
         doc = await state.paperless.get_document(doc_id)
         try:
@@ -199,7 +204,9 @@ async def classify_document(request: Request, doc_id: int):
             "partials/error.html",
             {"error": f"Klassifizierung fehlgeschlagen: {e}", "doc_id": doc_id},
             )
-        state.db.set_suggestion(doc_id, suggestion)
+        # Only cache successful results (confidence > 0)
+        if suggestion.confidence > 0:
+            state.db.set_suggestion(doc_id, suggestion)
 
     suggestion = state.db.get_suggestion(doc_id)
     doc = await state.paperless.get_document(doc_id)
