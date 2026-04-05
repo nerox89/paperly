@@ -279,8 +279,9 @@ class OllamaProvider(BaseProvider):
 # ---------------------------------------------------------------------------
 
 class Classifier:
-    def __init__(self, provider: BaseProvider) -> None:
+    def __init__(self, provider: BaseProvider, custom_prompt: str = "") -> None:
         self._provider = provider
+        self.custom_prompt = custom_prompt
 
     @property
     def provider(self) -> BaseProvider:
@@ -302,10 +303,12 @@ class Classifier:
         truncated = _smart_truncate(content, MAX_CONTENT_CHARS)
         user_message = _build_user_message(truncated, taxonomy, original_title, filename)
 
-        # Local models benefit from few-shot examples and an explicit closing instruction
+        # Build system prompt: default + optional custom instructions
         system = SYSTEM_PROMPT
+        if self.custom_prompt:
+            system += f"\n\nZusätzliche Anweisungen:\n{self.custom_prompt}\n"
         if self._provider.name == "ollama":
-            system = SYSTEM_PROMPT + FEWSHOT_EXAMPLE
+            system += FEWSHOT_EXAMPLE
 
         try:
             data = await self._provider.generate(system, user_message)

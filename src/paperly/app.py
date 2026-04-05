@@ -102,7 +102,8 @@ async def lifespan(app: FastAPI):
 
     # Build classifier with provider from settings
     provider = _build_provider(state.db)
-    state.classifier = Classifier(provider)
+    custom_prompt = state.db.get_setting("custom_prompt", "")
+    state.classifier = Classifier(provider, custom_prompt=custom_prompt)
 
     state.taxonomy = await state.paperless.get_taxonomy()
 
@@ -802,6 +803,7 @@ async def settings_view(request: Request):
         "claude_model": state.db.get_setting("claude_model", os.environ.get("PAPERLY_CLAUDE_MODEL", "claude-haiku-4-5")),
         "ollama_url": state.db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434")),
         "ollama_model": state.db.get_setting("ollama_model", os.environ.get("PAPERLY_OLLAMA_MODEL", "gemma4:e4b")),
+        "custom_prompt": state.db.get_setting("custom_prompt", ""),
     }
     return templates.TemplateResponse(
         request,
@@ -821,22 +823,26 @@ async def settings_save(
     claude_model: Annotated[str, Form()] = "claude-haiku-4-5",
     ollama_url: Annotated[str, Form()] = "http://localhost:11434",
     ollama_model: Annotated[str, Form()] = "gemma4:e4b",
+    custom_prompt: Annotated[str, Form()] = "",
 ):
     """Save settings and switch provider."""
     state.db.set_setting("ai_provider", ai_provider)
     state.db.set_setting("claude_model", claude_model)
     state.db.set_setting("ollama_url", ollama_url)
     state.db.set_setting("ollama_model", ollama_model)
+    state.db.set_setting("custom_prompt", custom_prompt.strip())
 
     # Rebuild provider at runtime
     provider = _build_provider(state.db)
     state.classifier.provider = provider
+    state.classifier.custom_prompt = custom_prompt.strip()
 
     current = {
         "ai_provider": ai_provider,
         "claude_model": claude_model,
         "ollama_url": ollama_url,
         "ollama_model": ollama_model,
+        "custom_prompt": custom_prompt.strip(),
     }
     return templates.TemplateResponse(
         request,
