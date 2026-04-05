@@ -169,7 +169,7 @@ class OllamaProvider(BaseProvider):
         last_error: Exception | None = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=180.0) as client:
                     resp = await client.post(
                         f"{self._base_url}/api/chat",
                         json={
@@ -180,12 +180,14 @@ class OllamaProvider(BaseProvider):
                             ],
                             "format": "json",
                             "stream": False,
-                            "options": {"num_predict": 600},
+                            "options": {"num_predict": 800},
                         },
                     )
                     resp.raise_for_status()
                     data = resp.json()
-                    raw = data["message"]["content"].strip()
+                    raw = (data.get("message", {}).get("content", "") or "").strip()
+                    if not raw:
+                        raise json.JSONDecodeError("Empty response from Ollama", "", 0)
                     return _parse_json_response(raw)
             except json.JSONDecodeError as e:
                 logger.warning("Ollama returned invalid JSON (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
@@ -280,7 +282,15 @@ def _parse_json_response(raw: str) -> dict:
         if raw.startswith("json"):
             raw = raw[4:]
         raw = raw.rstrip("`").strip()
-    return json.loads(raw)
+    result = json.loads(raw)
+    # Some models wrap the result in an array — unwrap it
+    if isinstance(result, list):
+        if len(result) > 0 and isinstance(result[0], dict):
+            return result[0]
+        raise json.JSONDecodeError("LLM returned array without dict", raw, 0)
+    if not isinstance(result, dict):
+        raise json.JSONDecodeError("LLM returned non-object JSON", raw, 0)
+    return result
 
 
 def _smart_truncate(content: str, max_chars: int) -> str:
