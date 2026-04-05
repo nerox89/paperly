@@ -225,9 +225,13 @@ class OllamaProvider(BaseProvider):
                             attempt, MAX_RETRIES, list(msg.keys()), msg.get("content"), len(thinking),
                         )
                         raise json.JSONDecodeError("Empty response from Ollama", "", 0)
+                    logger.info("Ollama raw content (%d chars): %.500s", len(raw), raw)
                     return _parse_json_response(raw)
             except json.JSONDecodeError as e:
-                logger.warning("Ollama returned invalid JSON (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                logger.warning(
+                    "Ollama returned invalid JSON (attempt %d/%d): %s — raw content: %.300s",
+                    attempt, MAX_RETRIES, e, raw if 'raw' in dir() else '(no raw)',
+                )
                 last_error = e
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(RETRY_BASE_DELAY * attempt)
