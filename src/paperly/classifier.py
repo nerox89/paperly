@@ -213,6 +213,12 @@ class OllamaProvider(BaseProvider):
                     if attempt < MAX_RETRIES:
                         await asyncio.sleep(RETRY_BASE_DELAY * attempt)
                         continue
+        # Last resort: try to salvage the last wrong-schema response
+        if isinstance(last_error, ValueError) and 'parsed' in dir():
+            salvaged = _salvage_wrong_schema(parsed)  # type: ignore[possibly-undefined]
+            if salvaged:
+                logger.info("Salvaged wrong-schema response as low-confidence result")
+                return salvaged
         raise last_error  # type: ignore[misc]
 
     async def _ollama_call(self, system: str, user_message: str, *, think: bool) -> str:
@@ -340,6 +346,33 @@ def _validate_schema(data: dict) -> None:
         raise ValueError(f"confidence must be a number, got: {type(data.get('confidence'))}")
 
 
+def _salvage_wrong_schema(data: dict) -> dict | None:
+    """Try to convert a wrong-schema LLM response into our expected format."""
+    # Only attempt if it has some recognizable classification info
+    if not isinstance(data, dict):
+        return None
+    has_useful_info = any(k in data for k in ("document_type", "keywords", "entities", "kategorie"))
+    if not has_useful_info:
+        return None
+
+    logger.info("Attempting to salvage wrong-schema response: %s", list(data.keys()))
+    result = {
+        "title": data.get("title", data.get("document_type", "")),
+        "created": data.get("created", data.get("date")),
+        "correspondent_id": data.get("correspondent_id"),
+        "correspondent_name": data.get("correspondent_name"),
+        "tag_ids": data.get("tag_ids", []),
+        "new_tags": data.get("new_tags", data.get("keywords", [])[:5]),
+        "document_type_id": data.get("document_type_id"),
+        "confidence": float(data.get("confidence", 0.4)),
+        "reasoning": data.get("reasoning", data.get("analysis", "Automatisch rekonstruiert aus unvollständiger KI-Antwort")),
+    }
+
+    if not result["title"]:
+        return None
+    return result
+
+
 def _extract_json_from_text(text: str) -> str:
     """Try to extract a JSON object from free-form text (e.g. thinking output)."""
     # Look for ```json ... ``` blocks first
@@ -430,10 +463,12 @@ def _build_user_message(content: str, taxonomy: Taxonomy, original_title: str, f
 
     parts.append(f"## OCR-Text des Dokuments\n{content}")
     parts.append(
-        "Bitte klassifiziere dieses Dokument anhand des OCR-Textes und der vorhandenen Taxonomie.\n\n"
-        "WICHTIG: Antworte ausschließlich mit einem einzigen JSON-Objekt. "
-        "Kein Markdown, keine Erklärungen, kein Text vor oder nach dem JSON. "
-        "Beginne deine Antwort mit { und ende mit }."
+        "Klassifiziere dieses Dokument. Antworte NUR mit diesem exakten JSON-Format:\n"
+        '{"title": "Kurzer Titel", "created": "YYYY-MM-DD", '
+        '"correspondent_id": null, "correspondent_name": "Name", '
+        '"tag_ids": [], "new_tags": [], "document_type_id": null, '
+        '"confidence": 0.85, "reasoning": "Begründung"}\n\n'
+        "WICHTIG: Verwende exakt diese Schlüssel. Kein anderes Format."
     )
 
     return "\n\n".join(parts)
