@@ -208,11 +208,22 @@ class OllamaProvider(BaseProvider):
                     )
                     resp.raise_for_status()
                     data = resp.json()
-                    thinking = (data.get("message", {}).get("thinking", "") or "").strip()
+                    msg = data.get("message", {})
+                    thinking = (msg.get("thinking", "") or "").strip()
                     if thinking:
-                        logger.debug("Ollama thinking (%d chars): %.200s…", len(thinking), thinking)
-                    raw = (data.get("message", {}).get("content", "") or "").strip()
+                        logger.debug("Ollama thinking (%d chars): %.300s…", len(thinking), thinking)
+                    raw = (msg.get("content", "") or "").strip()
+
+                    # Some models with think+json put output only in thinking
+                    if not raw and thinking:
+                        logger.info("Ollama content empty, extracting JSON from thinking field")
+                        raw = _extract_json_from_text(thinking)
+
                     if not raw:
+                        logger.warning(
+                            "Ollama empty response (attempt %d/%d). Keys: %s, content=%r, thinking=%d chars",
+                            attempt, MAX_RETRIES, list(msg.keys()), msg.get("content"), len(thinking),
+                        )
                         raise json.JSONDecodeError("Empty response from Ollama", "", 0)
                     return _parse_json_response(raw)
             except json.JSONDecodeError as e:
@@ -305,6 +316,27 @@ class Classifier:
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+def _extract_json_from_text(text: str) -> str:
+    """Try to extract a JSON object from free-form text (e.g. thinking output)."""
+    # Look for ```json ... ``` blocks first
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        return m.group(1)
+    # Find the outermost { ... } block
+    start = text.find("{")
+    if start == -1:
+        return ""
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return ""
+
 
 def _parse_json_response(raw: str) -> dict:
     """Parse JSON from LLM response, stripping markdown fences if present."""
