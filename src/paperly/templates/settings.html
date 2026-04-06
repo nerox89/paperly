@@ -7,7 +7,7 @@
   <!-- Header -->
   <div class="flex items-center justify-between">
     <div>
-      <h1 class="text-2xl font-mono font-bold text-slate-100">KI-Einstellungen</h1>
+      <h1 class="text-2xl font-mono font-bold text-slate-100">Einstellungen</h1>
       <p class="text-sm text-slate-400 mt-1">
         Aktiv: <span class="text-cyan-400 font-mono">{{ active_provider }}</span>
         / <span class="text-violet-400 font-mono">{{ active_model }}</span>
@@ -23,6 +23,34 @@
 
   <!-- Settings Form -->
   <form method="post" action="/settings" class="space-y-6">
+
+    <!-- Paperless Connection -->
+    <div class="glass rounded-xl p-6 border border-white/5 space-y-4">
+      <h2 class="text-lg font-mono font-semibold text-slate-200">📄 Paperless-NGX Verbindung</h2>
+      <div>
+        <label for="paperless-url" class="block text-sm font-medium text-slate-400 mb-1">Server URL (intern)</label>
+        <input type="text" name="paperless_url" id="paperless-url"
+               value="{{ settings.paperless_url }}"
+               class="input-dark w-full"
+               placeholder="http://paperless-ngx:8000">
+        <p class="text-xs text-slate-500 mt-1">Docker-interne oder lokale URL zum Paperless-NGX Server.</p>
+      </div>
+      <div>
+        <label for="paperless-token" class="block text-sm font-medium text-slate-400 mb-1">API Token</label>
+        <input type="password" name="paperless_token" id="paperless-token"
+               value="{{ settings.paperless_token }}"
+               class="input-dark w-full"
+               placeholder="Token aus Paperless → Einstellungen → API Token">
+      </div>
+      <div>
+        <label for="paperless-public" class="block text-sm font-medium text-slate-400 mb-1">Öffentliche URL (optional)</label>
+        <input type="text" name="paperless_public_url" id="paperless-public"
+               value="{{ settings.paperless_public_url }}"
+               class="input-dark w-full"
+               placeholder="http://192.168.20.192:18000">
+        <p class="text-xs text-slate-500 mt-1">URL für den "In Paperless öffnen"-Link. Falls leer wird die Server-URL verwendet.</p>
+      </div>
+    </div>
 
     <!-- Provider Selection -->
     <div class="glass rounded-xl p-6 border border-white/5 space-y-4">

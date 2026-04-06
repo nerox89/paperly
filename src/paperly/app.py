@@ -89,16 +89,19 @@ def _build_provider(db: Database) -> BaseProvider:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    paperless_url = os.environ["PAPERLESS_URL"]
-    paperless_token = os.environ["PAPERLESS_TOKEN"]
-
-    state.paperless = PaperlessClient(paperless_url, paperless_token)
-    await state.paperless.open()
-
     # SQLite database for persistent cache, history, and settings
     data_dir = os.environ.get("PAPERLY_DATA_DIR", ".")
     state.db = Database(Path(data_dir) / "paperly.db")
     state.db.open()
+
+    # Paperless connection: DB settings override env vars
+    paperless_url = state.db.get_setting("paperless_url", os.environ.get("PAPERLESS_URL", ""))
+    paperless_token = state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", ""))
+    if not paperless_url or not paperless_token:
+        raise RuntimeError("PAPERLESS_URL and PAPERLESS_TOKEN must be set (env or settings)")
+
+    state.paperless = PaperlessClient(paperless_url, paperless_token)
+    await state.paperless.open()
 
     # Build classifier with provider from settings
     provider = _build_provider(state.db)
@@ -175,7 +178,7 @@ async def document_view(request: Request, doc_id: int):
             "doc": doc,
             "suggestion": suggestion,
             "taxonomy": state.taxonomy,
-            "paperless_url": os.environ.get("PAPERLY_PAPERLESS_PUBLIC_URL", os.environ["PAPERLESS_URL"]),
+            "paperless_url": state.db.get_setting("paperless_public_url") or state.db.get_setting("paperless_url") or os.environ.get("PAPERLESS_URL", ""),
         },
     )
 
@@ -844,6 +847,9 @@ async def settings_view(request: Request):
         "ollama_url": state.db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434")),
         "ollama_model": state.db.get_setting("ollama_model", os.environ.get("PAPERLY_OLLAMA_MODEL", "gemma4:e4b")),
         "custom_prompt": state.db.get_setting("custom_prompt", ""),
+        "paperless_url": state.db.get_setting("paperless_url", os.environ.get("PAPERLESS_URL", "")),
+        "paperless_token": state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", "")),
+        "paperless_public_url": state.db.get_setting("paperless_public_url", os.environ.get("PAPERLY_PAPERLESS_PUBLIC_URL", "")),
     }
     return templates.TemplateResponse(
         request,
@@ -864,6 +870,9 @@ async def settings_save(
     ollama_url: Annotated[str, Form()] = "http://localhost:11434",
     ollama_model: Annotated[str, Form()] = "gemma4:e4b",
     custom_prompt: Annotated[str, Form()] = "",
+    paperless_url: Annotated[str, Form()] = "",
+    paperless_token: Annotated[str, Form()] = "",
+    paperless_public_url: Annotated[str, Form()] = "",
 ):
     """Save settings and switch provider."""
     state.db.set_setting("ai_provider", ai_provider)
@@ -871,6 +880,22 @@ async def settings_save(
     state.db.set_setting("ollama_url", ollama_url)
     state.db.set_setting("ollama_model", ollama_model)
     state.db.set_setting("custom_prompt", custom_prompt.strip())
+
+    # Save Paperless connection (only if provided — don't overwrite with blank)
+    if paperless_url.strip():
+        state.db.set_setting("paperless_url", paperless_url.strip())
+    if paperless_token.strip():
+        state.db.set_setting("paperless_token", paperless_token.strip())
+    state.db.set_setting("paperless_public_url", paperless_public_url.strip())
+
+    # Reconnect Paperless if URL or token changed
+    stored_url = state.db.get_setting("paperless_url", os.environ.get("PAPERLESS_URL", ""))
+    stored_token = state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", ""))
+    if stored_url and stored_token:
+        await state.paperless.close()
+        state.paperless = PaperlessClient(stored_url, stored_token)
+        await state.paperless.open()
+        state.taxonomy = await state.paperless.get_taxonomy()
 
     # Rebuild provider at runtime
     provider = _build_provider(state.db)
@@ -883,6 +908,9 @@ async def settings_save(
         "ollama_url": ollama_url,
         "ollama_model": ollama_model,
         "custom_prompt": custom_prompt.strip(),
+        "paperless_url": state.db.get_setting("paperless_url", os.environ.get("PAPERLESS_URL", "")),
+        "paperless_token": state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", "")),
+        "paperless_public_url": paperless_public_url.strip(),
     }
     return templates.TemplateResponse(
         request,
