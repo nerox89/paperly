@@ -109,6 +109,78 @@
   </div>
   {% endif %}
 
+  <!-- Feedback History (training data) -->
+  {% if recent_feedback %}
+  <div class="glass rounded-xl p-6 space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-mono font-semibold text-slate-200">📋 Feedback-Verlauf</h2>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-slate-500">{{ feedback_count }} Einträge gesamt</span>
+        <form method="post" action="/learning/feedback/clear"
+              onsubmit="return confirm('Alle Feedback-Daten und auto-Regeln löschen? Manuelle Regeln bleiben erhalten.')">
+          <button type="submit" class="btn-ghost text-xs px-2 py-1 text-rose-400">Alle löschen</button>
+        </form>
+      </div>
+    </div>
+    <p class="text-xs text-slate-400">
+      Jeder Eintrag ist ein Trainingsbeispiel. Lösche fehlerhafte Einträge, damit sie nicht als Beispiel verwendet werden.
+    </p>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-xs text-slate-500 uppercase tracking-wider">
+            <th class="text-left py-2 px-3">Doc</th>
+            <th class="text-left py-2 px-3">Titel</th>
+            <th class="text-left py-2 px-3">Status</th>
+            <th class="text-left py-2 px-3">Geändert</th>
+            <th class="text-right py-2 px-3">Conf.</th>
+            <th class="text-right py-2 px-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for fb in recent_feedback %}
+          <tr class="border-t border-white/5 hover:bg-white/[0.02]">
+            <td class="py-2 px-3 font-mono text-slate-400 text-xs">#{{ fb.doc_id }}</td>
+            <td class="py-2 px-3 text-slate-200 text-xs max-w-[200px] truncate">
+              {{ fb.final_title or fb.suggested_title or '–' }}
+            </td>
+            <td class="py-2 px-3">
+              {% if fb.action == 'accept' %}
+                <span class="chip chip-green text-xs">✅ akzeptiert</span>
+              {% elif fb.action == 'modify' %}
+                <span class="chip chip-amber text-xs">✏️ korrigiert</span>
+              {% elif fb.action == 'skip' %}
+                <span class="chip text-xs">⏭ übersprungen</span>
+              {% elif fb.action == 'delete' %}
+                <span class="chip chip-rose text-xs">🗑 gelöscht</span>
+              {% endif %}
+            </td>
+            <td class="py-2 px-3 text-xs text-slate-400">
+              {% set changes = [] %}
+              {% if fb.title_changed %}{% set _ = changes.append('Titel') %}{% endif %}
+              {% if fb.correspondent_changed %}{% set _ = changes.append('Absender') %}{% endif %}
+              {% if fb.document_type_changed %}{% set _ = changes.append('Typ') %}{% endif %}
+              {% if fb.storage_path_changed %}{% set _ = changes.append('Pfad') %}{% endif %}
+              {% if fb.tags_changed %}{% set _ = changes.append('Tags') %}{% endif %}
+              {{ changes | join(', ') or '–' }}
+            </td>
+            <td class="py-2 px-3 text-right font-mono text-xs text-slate-400">
+              {% if fb.suggested_confidence %}{{ (fb.suggested_confidence * 100) | round(0) | int }}%{% endif %}
+            </td>
+            <td class="py-2 px-3 text-right">
+              <form method="post" action="/learning/feedback/{{ fb.id }}/delete" class="inline"
+                    onsubmit="return confirm('Feedback-Eintrag löschen?')">
+                <button type="submit" class="text-slate-500 hover:text-rose-400 text-xs" title="Löschen">✕</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
   {% endif %}
 
   <!-- Detected Patterns (suggestions for new rules) -->

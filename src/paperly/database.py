@@ -528,6 +528,33 @@ class Database:
         assert self._conn
         return self._conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]
 
+    def get_recent_feedback(self, limit: int = 20) -> list[dict]:
+        """Return recent feedback entries for the dashboard."""
+        assert self._conn
+        rows = self._conn.execute(
+            """SELECT id, doc_id, action, accepted_as_is,
+                      suggested_title, final_title, title_changed,
+                      correspondent_changed, document_type_changed,
+                      storage_path_changed, tags_changed,
+                      suggested_confidence, provider_name, created_at
+               FROM feedback ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_feedback(self, feedback_id: int) -> None:
+        """Delete a single feedback record."""
+        assert self._conn
+        self._conn.execute("DELETE FROM feedback WHERE id = ?", (feedback_id,))
+        self._conn.commit()
+
+    def clear_all_feedback(self) -> None:
+        """Delete all feedback data and reset learning."""
+        assert self._conn
+        self._conn.execute("DELETE FROM feedback")
+        self._conn.execute("DELETE FROM correction_rules WHERE auto_generated = 1")
+        self._conn.commit()
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers

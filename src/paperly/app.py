@@ -978,6 +978,8 @@ async def learning_dashboard(request: Request):
             "rules": rules,
             "new_patterns": new_patterns,
             "feedback_count": state.db.feedback_count(),
+            "recent_feedback": state.db.get_recent_feedback(limit=20),
+            "taxonomy": state.taxonomy,
         },
     )
 
@@ -1019,6 +1021,20 @@ async def accept_pattern(
     """Accept a detected pattern as a correction rule."""
     if source_pattern and prompt_text:
         state.db.add_rule("auto", description, prompt_text, source_pattern=source_pattern, auto_generated=True)
+    return RedirectResponse("/learning", status_code=303)
+
+
+@app.post("/learning/feedback/{feedback_id}/delete")
+async def delete_feedback(feedback_id: int):
+    """Delete a single feedback entry (removes it from learning data)."""
+    state.db.delete_feedback(feedback_id)
+    return RedirectResponse("/learning", status_code=303)
+
+
+@app.post("/learning/feedback/clear")
+async def clear_all_feedback():
+    """Delete all feedback data and auto-generated rules. Manual rules are kept."""
+    state.db.clear_all_feedback()
     return RedirectResponse("/learning", status_code=303)
 
 
