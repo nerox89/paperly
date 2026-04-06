@@ -252,13 +252,14 @@ class Database:
 
         f_tags_json = json.dumps(final_tag_ids) if final_tag_ids is not None else None
 
-        # Compute diff flags
-        title_changed = (s_title or "") != (final_title or "") if action in ("accept", "modify") else False
-        corr_changed = s_corr != final_correspondent_id if action in ("accept", "modify") else False
-        dt_changed = s_dt != final_document_type_id if action in ("accept", "modify") else False
-        sp_changed = s_sp != final_storage_path_id if action in ("accept", "modify") else False
-        tags_changed = set(suggestion.tag_ids if suggestion else []) != set(final_tag_ids or []) if action in ("accept", "modify") else False
-        accepted_as_is = action in ("accept", "modify") and not any([title_changed, corr_changed, dt_changed, sp_changed, tags_changed])
+        # Compute diff flags (for apply/accept/modify actions)
+        is_apply = action in ("apply", "accept", "modify")
+        title_changed = (s_title or "") != (final_title or "") if is_apply else False
+        corr_changed = s_corr != final_correspondent_id if is_apply else False
+        dt_changed = s_dt != final_document_type_id if is_apply else False
+        sp_changed = s_sp != final_storage_path_id if is_apply else False
+        tags_changed = set(suggestion.tag_ids if suggestion else []) != set(final_tag_ids or []) if is_apply else False
+        accepted_as_is = is_apply and not any([title_changed, corr_changed, dt_changed, sp_changed, tags_changed])
 
         # Determine real action based on diffs
         if action == "apply":
