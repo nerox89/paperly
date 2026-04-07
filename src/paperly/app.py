@@ -1408,6 +1408,7 @@ async def add_rule(
     """Add a manual correction rule."""
     if description.strip() and prompt_text.strip():
         state.db.add_rule(rule_type, description.strip(), prompt_text.strip(), auto_generated=False)
+        state.db.clear_all_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
@@ -1415,6 +1416,7 @@ async def add_rule(
 async def toggle_rule(rule_id: int):
     """Toggle a correction rule on/off."""
     state.db.toggle_rule(rule_id)
+    state.db.clear_all_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
@@ -1422,6 +1424,7 @@ async def toggle_rule(rule_id: int):
 async def delete_rule(rule_id: int):
     """Delete a correction rule."""
     state.db.delete_rule(rule_id)
+    state.db.clear_all_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
@@ -1434,6 +1437,7 @@ async def edit_rule(
     """Edit description and prompt text of a correction rule."""
     if description.strip() and prompt_text.strip():
         state.db.update_rule(rule_id, description.strip(), prompt_text.strip())
+        state.db.clear_all_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
@@ -1447,6 +1451,7 @@ async def accept_pattern(
     """Accept a detected pattern as a correction rule."""
     if source_pattern and prompt_text:
         state.db.add_rule("auto", description, prompt_text, source_pattern=source_pattern, auto_generated=True)
+        state.db.clear_all_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
