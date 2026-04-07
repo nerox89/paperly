@@ -57,6 +57,8 @@ class AppState:
     batch_current_doc: str
     batch_log: list[dict]  # last N completed items
 
+    taxonomy_refreshed_at: float
+
     def __init__(self) -> None:
         self.batch_running = False
         self.batch_total = 0
@@ -66,6 +68,7 @@ class AppState:
         self.batch_start_time = 0.0
         self.batch_current_doc = ""
         self.batch_log = []
+        self.taxonomy_refreshed_at = 0.0
 
 
 state = AppState()
@@ -109,6 +112,7 @@ async def lifespan(app: FastAPI):
     state.classifier = Classifier(provider, custom_prompt=custom_prompt)
 
     state.taxonomy = await state.paperless.get_taxonomy()
+    state.taxonomy_refreshed_at = time.time()
 
     logger.info(
         "Loaded taxonomy: %d tags, %d correspondents, %d document types, %d storage paths, inbox_tag=%s",
@@ -135,8 +139,22 @@ app.mount("/static", StaticFiles(directory=_static), name="static")
 # Routes
 # ---------------------------------------------------------------------------
 
+TAXONOMY_MAX_AGE = 300  # 5 minutes
+
+async def _ensure_fresh_taxonomy() -> None:
+    """Refresh taxonomy from Paperless if older than TAXONOMY_MAX_AGE seconds."""
+    if time.time() - state.taxonomy_refreshed_at > TAXONOMY_MAX_AGE:
+        await _refresh_taxonomy()
+
+
+async def _refresh_taxonomy() -> None:
+    """Force-refresh taxonomy from Paperless."""
+    state.taxonomy = await state.paperless.get_taxonomy()
+    state.taxonomy_refreshed_at = time.time()
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, page: int = 1):
+    await _ensure_fresh_taxonomy()
     if not state.taxonomy.inbox_tag_id:
         raise HTTPException(500, "INBOX tag not found in Paperless")
 
@@ -169,6 +187,7 @@ async def index(request: Request, page: int = 1):
 
 @app.get("/document/{doc_id}", response_class=HTMLResponse)
 async def document_view(request: Request, doc_id: int):
+    await _ensure_fresh_taxonomy()
     doc = await state.paperless.get_document(doc_id)
     suggestion = state.db.get_suggestion(doc_id)
     return templates.TemplateResponse(
@@ -266,7 +285,7 @@ async def apply_document(
     elif correspondent_new.strip():
         new_corr = await state.paperless.create_correspondent(correspondent_new.strip())
         corr_id = new_corr.id
-        state.taxonomy = await state.paperless.get_taxonomy()
+        await _refresh_taxonomy()
 
     # Resolve document type
     dt_id: int | None = None
@@ -275,7 +294,7 @@ async def apply_document(
     elif document_type_new.strip():
         new_dt = await state.paperless.create_document_type(document_type_new.strip())
         dt_id = new_dt.id
-        state.taxonomy = await state.paperless.get_taxonomy()
+        await _refresh_taxonomy()
 
     # Resolve storage path
     sp_id: int | None = None
@@ -287,14 +306,14 @@ async def apply_document(
     if tag_new.strip():
         new_tag = await state.paperless.create_tag(tag_new.strip())
         chosen_tags.append(new_tag.id)
-        state.taxonomy = await state.paperless.get_taxonomy()
+        await _refresh_taxonomy()
     # Create AI-suggested new tags
     for new_name in new_tag_names:
         if new_name.strip():
             new_tag = await state.paperless.create_tag(new_name.strip())
             chosen_tags.append(new_tag.id)
     if new_tag_names:
-        state.taxonomy = await state.paperless.get_taxonomy()
+        await _refresh_taxonomy()
 
     # Remove INBOX tag
     if state.taxonomy.inbox_tag_id in chosen_tags:
@@ -407,8 +426,14 @@ async def stats():
 
 @app.post("/refresh-taxonomy")
 async def refresh_taxonomy():
-    state.taxonomy = await state.paperless.get_taxonomy()
-    return {"status": "ok", "correspondents": len(state.taxonomy.correspondents)}
+    await _refresh_taxonomy()
+    return {
+        "status": "ok",
+        "tags": len(state.taxonomy.tags),
+        "correspondents": len(state.taxonomy.correspondents),
+        "document_types": len(state.taxonomy.document_types),
+        "storage_paths": len(state.taxonomy.storage_paths),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -750,8 +775,8 @@ async def cleanup_view(request: Request):
     """Show taxonomy cleanup analysis page."""
     from paperly.cleanup import _analyse
 
-    taxonomy = await state.paperless.get_taxonomy()
-    state.taxonomy = taxonomy
+    await _refresh_taxonomy()
+    taxonomy = state.taxonomy
     merge_actions, delete_actions = _analyse(taxonomy)
 
     return templates.TemplateResponse(
@@ -770,7 +795,8 @@ async def cleanup_execute(request: Request):
     """Execute cleanup actions (merges and deletes)."""
     from paperly.cleanup import _analyse, _reassign_and_delete
 
-    taxonomy = await state.paperless.get_taxonomy()
+    await _refresh_taxonomy()
+    taxonomy = state.taxonomy
     merge_actions, delete_actions = _analyse(taxonomy)
 
     results: list[dict] = []
@@ -792,10 +818,9 @@ async def cleanup_execute(request: Request):
         except Exception as e:
             results.append({"action": f"Fehler beim Löschen von {action.name}: {e}", "ok": False})
 
-    state.taxonomy = await state.paperless.get_taxonomy()
+    await _refresh_taxonomy()
 
-    return templates.TemplateResponse(
-            request,
+    return templates.TemplateResponse(            request,
             "partials/cleanup_results.html",
             {"results": results},
     )
@@ -895,7 +920,7 @@ async def settings_save(
         await state.paperless.close()
         state.paperless = PaperlessClient(stored_url, stored_token)
         await state.paperless.open()
-        state.taxonomy = await state.paperless.get_taxonomy()
+        await _refresh_taxonomy()
 
     # Rebuild provider at runtime
     provider = _build_provider(state.db)
