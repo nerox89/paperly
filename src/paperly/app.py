@@ -186,7 +186,7 @@ async def index(request: Request, page: int = 1):
 
 
 @app.get("/document/{doc_id}", response_class=HTMLResponse)
-async def document_view(request: Request, doc_id: int):
+async def document_view(request: Request, doc_id: int, ref: str = ""):
     await _ensure_fresh_taxonomy()
     doc = await state.paperless.get_document(doc_id)
     suggestion = state.db.get_suggestion(doc_id)
@@ -198,6 +198,7 @@ async def document_view(request: Request, doc_id: int):
             "suggestion": suggestion,
             "taxonomy": state.taxonomy,
             "paperless_url": state.db.get_setting("paperless_public_url") or state.db.get_setting("paperless_url") or os.environ.get("PAPERLESS_URL", ""),
+            "ref": ref,
         },
     )
 
@@ -362,9 +363,15 @@ async def apply_document(
 
 
 def _redirect_to_next(request: Request) -> RedirectResponse | JSONResponse:
-    """Redirect to next suggestion or inbox. Supports both regular and HTMX requests."""
-    next_id = state.db.next_suggestion_doc_id()
-    target = f"/document/{next_id}" if next_id else "/"
+    """Redirect to next suggestion, audit, or inbox depending on context."""
+    ref = request.query_params.get("ref", "")
+
+    if ref == "audit":
+        target = "/audit"
+    else:
+        next_id = state.db.next_suggestion_doc_id()
+        target = f"/document/{next_id}" if next_id else "/"
+
     if request.headers.get("HX-Request"):
         return JSONResponse({}, headers={"HX-Redirect": target})
     return RedirectResponse(target, status_code=303)

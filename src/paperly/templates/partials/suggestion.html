@@ -4,7 +4,7 @@
 {% set conf_color_class = "chip-green" if suggestion.confidence >= 0.8 else ("chip-amber" if suggestion.confidence >= 0.5 else "chip-rose") %}
 {% set ring_color = "#10b981" if suggestion.confidence >= 0.8 else ("#f59e0b" if suggestion.confidence >= 0.5 else "#f43f5e") %}
 
-<form method="post" action="/document/{{ doc.id }}/apply" id="apply-form" class="flex flex-col gap-0">
+<form method="post" action="/document/{{ doc.id }}/apply{% if ref %}?ref={{ ref }}{% endif %}" id="apply-form" class="flex flex-col gap-0">
 
   <!-- AI Header bar with confidence ring -->
   <div class="flex items-center gap-4 mb-5">
@@ -169,14 +169,14 @@
       <kbd>↵</kbd>
     </button>
     <button type="button" id="skip-btn"
-            hx-post="/document/{{ doc.id }}/skip"
+            hx-post="/document/{{ doc.id }}/skip{% if ref %}?ref={{ ref }}{% endif %}"
             class="btn-ghost text-sm flex items-center gap-1.5 py-2.5">
       Überspringen
       <kbd>S</kbd>
     </button>
-    <a href="/" class="btn-ghost text-sm flex items-center py-2.5 px-3" title="Zurück (Esc)">✕</a>
+    <a href="{% if ref == 'audit' %}/audit{% else %}/{% endif %}" class="btn-ghost text-sm flex items-center py-2.5 px-3" title="Zurück (Esc)">✕</a>
     <button type="button" id="delete-btn"
-            hx-post="/document/{{ doc.id }}/delete"
+            hx-post="/document/{{ doc.id }}/delete{% if ref %}?ref={{ ref }}{% endif %}"
             hx-confirm="Dokument unwiderruflich löschen?"
             class="btn-danger text-sm flex items-center py-2.5 px-3"
             aria-label="Dokument löschen" title="Löschen">
