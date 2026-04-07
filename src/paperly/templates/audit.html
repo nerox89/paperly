@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% block title %}Audit — paperly{% endblock %}
+
+{% block content %}
+<div class="space-y-6 animate-in">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-mono font-bold text-slate-100">🔍 Dokument-Audit</h1>
+      <p class="text-sm text-slate-400 mt-1">
+        {{ total }} Dokumente{% if filters.scope == 'processed' %} (ohne Inbox){% elif filters.scope == 'all' %} (alle){% endif %}.
+        Überprüfe bestehende Verschlagwortung und trainiere die KI.
+      </p>
+    </div>
+    <button id="batch-btn" class="btn-violet text-sm"
+            onclick="batchClassify()">
+      🤖 Seite prüfen
+    </button>
+  </div>
+
+  <!-- Filters -->
+  <form method="get" action="/audit" class="glass rounded-xl p-4">
+    <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+      <!-- Scope -->
+      <div>
+        <label class="block text-xs font-mono text-slate-500 mb-1">Bereich</label>
+        <select name="scope" class="input-dark text-xs" onchange="this.form.submit()">
+          <option value="processed" {% if filters.scope == 'processed' %}selected{% endif %}>Bearbeitete</option>
+          <option value="all" {% if filters.scope == 'all' %}selected{% endif %}>Alle</option>
+          <option value="inbox" {% if filters.scope == 'inbox' %}selected{% endif %}>Inbox</option>
+        </select>
+      </div>
+
+      <!-- Search -->
+      <div class="col-span-2">
+        <label class="block text-xs font-mono text-slate-500 mb-1">Suche</label>
+        <input type="text" name="search" class="input-dark text-xs"
+               value="{{ filters.search }}" placeholder="Freitext...">
+      </div>
+
+      <!-- Correspondent -->
+      <div>
+        <label class="block text-xs font-mono text-slate-500 mb-1">Absender</label>
+        <select name="correspondent" class="input-dark text-xs">
+          <option value="">Alle</option>
+          {% for c in taxonomy.correspondents | sort(attribute='name') %}
+          <option value="{{ c.id }}" {% if filters.correspondent == c.id %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Document type -->
+      <div>
+        <label class="block text-xs font-mono text-slate-500 mb-1">Typ</label>
+        <select name="document_type" class="input-dark text-xs">
+          <option value="">Alle</option>
+          {% for dt in taxonomy.document_types | sort(attribute='name') %}
+          <option value="{{ dt.id }}" {% if filters.document_type == dt.id %}selected{% endif %}>{{ dt.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Storage path -->
+      <div>
+        <label class="block text-xs font-mono text-slate-500 mb-1">Pfad</label>
+        <select name="storage_path" class="input-dark text-xs">
+          <option value="">Alle</option>
+          {% for sp in taxonomy.storage_paths | sort(attribute='name') %}
+          <option value="{{ sp.id }}" {% if filters.storage_path == sp.id %}selected{% endif %}>{{ sp.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 mt-3">
+      <button type="submit" class="btn-neon text-xs px-3 py-1.5">Filtern</button>
+      <a href="/audit" class="btn-ghost text-xs px-3 py-1.5">Zurücksetzen</a>
+    </div>
+  </form>
+
+  <!-- Batch progress (hidden, shown by JS) -->
+  <div id="batch-progress" class="hidden glass rounded-xl p-4">
+    <div class="flex items-center gap-3">
+      <div class="animate-spin text-cyan-400">⚙</div>
+      <span class="text-sm text-slate-300" id="batch-status">Klassifiziere...</span>
+    </div>
+  </div>
+
+  <!-- Document list -->
+  {% if docs %}
+  <div class="space-y-3">
+    {% for doc in docs %}
+    <div class="glass rounded-xl p-4 hover:border-cyan-500/20 transition-colors" id="audit-doc-{{ doc.id }}">
+      <div class="flex items-start gap-4">
+        <!-- Thumbnail -->
+        <a href="/document/{{ doc.id }}" class="shrink-0">
+          <img src="/proxy/thumb/{{ doc.id }}" alt="" class="w-16 h-20 object-cover rounded-lg border border-white/10">
+        </a>
+
+        <!-- Info -->
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <a href="/document/{{ doc.id }}" class="text-sm font-medium text-slate-200 hover:text-cyan-400 truncate">
+              {{ doc.title }}
+            </a>
+            <span class="text-xs font-mono text-slate-600">#{{ doc.id }}</span>
+          </div>
+
+          <div class="flex flex-wrap gap-2 mt-2 text-xs">
+            {% if doc.correspondent %}
+              {% set corr = taxonomy.correspondent_by_id(doc.correspondent) %}
+              {% if corr %}
+              <span class="chip chip-violet">{{ corr.name }}</span>
+              {% endif %}
+            {% endif %}
+
+            {% if doc.document_type %}
+              {% set dt = taxonomy.document_type_by_id(doc.document_type) %}
+              {% if dt %}
+              <span class="chip chip-green">{{ dt.name }}</span>
+              {% endif %}
+            {% endif %}
+
+            {% if doc.storage_path %}
+              {% set sp = taxonomy.storage_path_by_id(doc.storage_path) %}
+              {% if sp %}
+              <span class="chip chip-amber">📁 {{ sp.name }}</span>
+              {% endif %}
+            {% endif %}
+
+            {% for tid in doc.tags %}
+              {% set t = taxonomy.tag_by_id(tid) %}
+              {% if t and t.name != 'INBOX' %}
+              <span class="chip chip-cyan">{{ t.name }}</span>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center gap-2 shrink-0">
+          <button hx-post="/audit/{{ doc.id }}/confirm"
+                  hx-target="#audit-result-{{ doc.id }}"
+                  hx-swap="innerHTML"
+                  class="btn-ghost text-xs px-2 py-1" title="Metadaten bestätigen (Training)">
+            ✅ Bestätigen
+          </button>
+          <button hx-post="/audit/{{ doc.id }}/classify"
+                  hx-target="#audit-result-{{ doc.id }}"
+                  hx-swap="innerHTML"
+                  hx-indicator="#audit-spinner-{{ doc.id }}"
+                  class="btn-neon text-xs px-2 py-1" title="KI-Vorschlag anfordern">
+            🤖 Prüfen
+          </button>
+          <span id="audit-spinner-{{ doc.id }}" class="htmx-indicator text-cyan-400 text-xs">⏳</span>
+        </div>
+      </div>
+
+      <!-- Result area (diffs appear here) -->
+      <div id="audit-result-{{ doc.id }}" class="mt-2"></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Pagination -->
+  {% set total_pages = (total + page_size - 1) // page_size %}
+  {% if total_pages > 1 %}
+  <div class="flex items-center justify-center gap-2 mt-6">
+    {% if page > 1 %}
+    <a href="/audit?page={{ page - 1 }}&scope={{ filters.scope }}&search={{ filters.search }}&correspondent={{ filters.correspondent or '' }}&document_type={{ filters.document_type or '' }}&storage_path={{ filters.storage_path or '' }}&tag={{ filters.tag or '' }}"
+       class="btn-ghost text-xs px-3 py-1.5">← Zurück</a>
+    {% endif %}
+
+    <span class="text-xs font-mono text-slate-500">
+      Seite {{ page }} / {{ total_pages }}
+    </span>
+
+    {% if page < total_pages %}
+    <a href="/audit?page={{ page + 1 }}&scope={{ filters.scope }}&search={{ filters.search }}&correspondent={{ filters.correspondent or '' }}&document_type={{ filters.document_type or '' }}&storage_path={{ filters.storage_path or '' }}&tag={{ filters.tag or '' }}"
+       class="btn-ghost text-xs px-3 py-1.5">Weiter →</a>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="glass rounded-xl p-12 text-center">
+    <div class="text-5xl mb-4">📄</div>
+    <h2 class="text-lg font-semibold text-slate-200 mb-2">Keine Dokumente gefunden</h2>
+    <p class="text-sm text-slate-400">Passe die Filter an oder wechsle den Bereich.</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function batchClassify() {
+  const btn = document.getElementById('batch-btn');
+  const progress = document.getElementById('batch-progress');
+  const status = document.getElementById('batch-status');
+
+  // Collect doc IDs from the current page
+  const docEls = document.querySelectorAll('[id^="audit-doc-"]');
+  const ids = Array.from(docEls).map(el => el.id.replace('audit-doc-', ''));
+
+  if (ids.length === 0) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Läuft...';
+  progress.classList.remove('hidden');
+  status.textContent = `Klassifiziere ${ids.length} Dokumente...`;
+
+  try {
+    const formData = new FormData();
+    formData.append('doc_ids', ids.join(','));
+
+    const resp = await fetch('/audit/batch-classify', { method: 'POST', body: formData });
+    const data = await resp.json();
+
+    status.textContent = `✅ ${data.classified} klassifiziert, ${data.diffs} mit Unterschieden`;
+    btn.textContent = '🤖 Seite prüfen';
+    btn.disabled = false;
+
+    // Reload page to show cached suggestions
+    if (data.diffs > 0) {
+      setTimeout(() => window.location.reload(), 1500);
+    }
+  } catch (e) {
+    status.textContent = `❌ Fehler: ${e.message}`;
+    btn.textContent = '🤖 Seite prüfen';
+    btn.disabled = false;
+  }
+}
+</script>
+{% endblock %}

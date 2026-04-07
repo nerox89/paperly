@@ -1,0 +1,66 @@
+<!-- Inline diff view for audit: shows differences between current metadata and AI suggestion -->
+{% if diffs %}
+<div class="mt-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 space-y-2">
+  <div class="flex items-center justify-between">
+    <span class="text-xs font-mono text-amber-400">{{ diffs | length }} Unterschied{{ 'e' if diffs | length != 1 }}</span>
+    <div class="flex items-center gap-2">
+      <button hx-post="/audit/{{ doc.id }}/apply-suggestion"
+              hx-target="#audit-result-{{ doc.id }}"
+              hx-swap="innerHTML"
+              hx-confirm="KI-Vorschlag übernehmen?"
+              class="btn-neon text-xs px-2 py-1">
+        ✨ KI übernehmen
+      </button>
+      <button hx-post="/audit/{{ doc.id }}/confirm"
+              hx-target="#audit-result-{{ doc.id }}"
+              hx-swap="innerHTML"
+              class="btn-ghost text-xs px-2 py-1">
+        Behalten
+      </button>
+    </div>
+  </div>
+
+  <table class="w-full text-xs">
+    <thead>
+      <tr class="text-slate-500 uppercase tracking-wider">
+        <th class="text-left py-1 px-2 w-24">Feld</th>
+        <th class="text-left py-1 px-2">Aktuell</th>
+        <th class="text-left py-1 px-2">KI-Vorschlag</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for field, current, suggested in diffs %}
+      <tr class="border-t border-white/5">
+        <td class="py-1.5 px-2 text-slate-400 font-mono">{{ field }}</td>
+        <td class="py-1.5 px-2 text-rose-300/80">{{ current }}</td>
+        <td class="py-1.5 px-2 text-emerald-300">{{ suggested }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if result.reasoning %}
+  <div class="text-xs text-slate-500 mt-1">
+    <span class="font-mono">Begründung:</span> {{ result.reasoning }}
+  </div>
+  {% endif %}
+
+  {% if result.confidence %}
+  <div class="text-xs font-mono text-slate-500">
+    Konfidenz: {{ (result.confidence * 100) | round(0) | int }}%
+  </div>
+  {% endif %}
+</div>
+
+{% else %}
+<div class="mt-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+  <span class="text-xs text-emerald-400">
+    ✅ KI stimmt zu — keine Änderungen vorgeschlagen
+  </span>
+  {% if result.confidence %}
+  <span class="text-xs font-mono text-slate-500 ml-2">
+    ({{ (result.confidence * 100) | round(0) | int }}% Konfidenz)
+  </span>
+  {% endif %}
+</div>
+{% endif %}

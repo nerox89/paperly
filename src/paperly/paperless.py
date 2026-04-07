@@ -159,6 +159,42 @@ class PaperlessClient:
         data = r.json()
         return [_parse_document(d) for d in data["results"]], data["count"]
 
+    async def get_documents(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 25,
+        ordering: str = "-created",
+        correspondent_id: int | None = None,
+        document_type_id: int | None = None,
+        storage_path_id: int | None = None,
+        tag_id: int | None = None,
+        exclude_tag_id: int | None = None,
+        search: str | None = None,
+    ) -> tuple[list[Document], int]:
+        """Generic document query with flexible filters."""
+        params: dict[str, str | int] = {
+            "page": page,
+            "page_size": page_size,
+            "ordering": ordering,
+        }
+        if correspondent_id:
+            params["correspondent__id"] = correspondent_id
+        if document_type_id:
+            params["document_type__id"] = document_type_id
+        if storage_path_id:
+            params["storage_path__id"] = storage_path_id
+        if tag_id:
+            params["tags__id__all"] = tag_id
+        if exclude_tag_id:
+            params["tags__id__none"] = exclude_tag_id
+        if search:
+            params["query"] = search
+        r = await self._c.get("/api/documents/", params=params)
+        r.raise_for_status()
+        data = r.json()
+        return [_parse_document(d) for d in data["results"]], data["count"]
+
     async def get_document(self, doc_id: int) -> Document:
         r = await self._c.get(f"/api/documents/{doc_id}/")
         r.raise_for_status()

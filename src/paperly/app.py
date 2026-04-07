@@ -969,6 +969,239 @@ async def test_ollama(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Audit — review all documents for consistent tagging
+# ---------------------------------------------------------------------------
+
+@app.get("/audit", response_class=HTMLResponse)
+async def audit_view(
+    request: Request,
+    page: int = 1,
+    correspondent: int | None = None,
+    document_type: int | None = None,
+    storage_path: int | None = None,
+    tag: int | None = None,
+    search: str | None = None,
+    scope: str = "processed",
+):
+    """Browse all documents with filters for audit/review."""
+    await _ensure_fresh_taxonomy()
+
+    exclude_tag = state.taxonomy.inbox_tag_id if scope == "processed" else None
+    only_tag = state.taxonomy.inbox_tag_id if scope == "inbox" else (tag or None)
+
+    docs, total = await state.paperless.get_documents(
+        page=page,
+        page_size=25,
+        correspondent_id=correspondent,
+        document_type_id=document_type,
+        storage_path_id=storage_path,
+        tag_id=only_tag,
+        exclude_tag_id=exclude_tag,
+        search=search,
+    )
+
+    # Check which docs already have cached AI suggestions
+    doc_suggestions = {}
+    for doc in docs:
+        s = state.db.get_suggestion(doc.id)
+        if s:
+            doc_suggestions[doc.id] = s
+
+    return templates.TemplateResponse(
+        request,
+        "audit.html",
+        {
+            "docs": docs,
+            "total": total,
+            "page": page,
+            "page_size": 25,
+            "taxonomy": state.taxonomy,
+            "doc_suggestions": doc_suggestions,
+            "filters": {
+                "correspondent": correspondent,
+                "document_type": document_type,
+                "storage_path": storage_path,
+                "tag": tag,
+                "search": search or "",
+                "scope": scope,
+            },
+        },
+    )
+
+
+@app.post("/audit/{doc_id}/confirm")
+async def audit_confirm(request: Request, doc_id: int):
+    """Confirm current document metadata is correct — feeds learning as accepted."""
+    doc = await state.paperless.get_document(doc_id)
+
+    # Build a pseudo-suggestion from the current metadata (as if AI got it right)
+    from paperly.classifier import ClassificationResult
+    pseudo_suggestion = ClassificationResult(
+        title=doc.title,
+        correspondent_id=doc.correspondent,
+        correspondent_name="",
+        tag_ids=doc.tags,
+        new_tags=[],
+        document_type_id=doc.document_type,
+        storage_path_id=doc.storage_path,
+        confidence=1.0,
+        reasoning="Confirmed by user during audit",
+        provider_name="audit",
+        provider_model="manual",
+    )
+
+    state.db.record_feedback(
+        doc_id,
+        action="accept",
+        suggestion=pseudo_suggestion,
+        final_title=doc.title,
+        final_correspondent_id=doc.correspondent,
+        final_document_type_id=doc.document_type,
+        final_storage_path_id=doc.storage_path,
+        final_tag_ids=doc.tags,
+        content_preview=doc.content[:500] if doc.content else "",
+    )
+
+    return HTMLResponse(
+        '<span class="chip chip-green text-xs">✅ Bestätigt — als Trainingsbeispiel gespeichert</span>'
+    )
+
+
+@app.post("/audit/{doc_id}/classify")
+async def audit_classify(request: Request, doc_id: int):
+    """Classify a document with AI and return diff view."""
+    doc = await state.paperless.get_document(doc_id)
+
+    try:
+        result = await state.classifier.classify(
+            doc.content, state.taxonomy,
+            original_title=doc.title,
+            filename=doc.original_file_name or "",
+            db=state.db,
+        )
+        state.db.set_suggestion(doc_id, result)
+    except Exception as e:
+        return HTMLResponse(
+            f'<span class="chip chip-rose text-xs">❌ Fehler: {e}</span>'
+        )
+
+    # Build diff between current metadata and AI suggestion
+    diffs = []
+    if result.title and result.title != doc.title:
+        diffs.append(("Titel", doc.title, result.title))
+    if result.correspondent_id and result.correspondent_id != doc.correspondent:
+        curr_name = state.taxonomy.correspondent_by_id(doc.correspondent).name if doc.correspondent and state.taxonomy.correspondent_by_id(doc.correspondent) else "–"
+        sugg_name = state.taxonomy.correspondent_by_id(result.correspondent_id).name if state.taxonomy.correspondent_by_id(result.correspondent_id) else result.correspondent_name
+        diffs.append(("Absender", curr_name, sugg_name))
+    if result.document_type_id and result.document_type_id != doc.document_type:
+        curr_name = state.taxonomy.document_type_by_id(doc.document_type).name if doc.document_type and state.taxonomy.document_type_by_id(doc.document_type) else "–"
+        sugg_name = state.taxonomy.document_type_by_id(result.document_type_id).name if state.taxonomy.document_type_by_id(result.document_type_id) else f"ID {result.document_type_id}"
+        diffs.append(("Dokumenttyp", curr_name, sugg_name))
+    if result.storage_path_id and result.storage_path_id != doc.storage_path:
+        curr_name = state.taxonomy.storage_path_by_id(doc.storage_path).name if doc.storage_path and state.taxonomy.storage_path_by_id(doc.storage_path) else "–"
+        sugg_name = state.taxonomy.storage_path_by_id(result.storage_path_id).name if state.taxonomy.storage_path_by_id(result.storage_path_id) else f"ID {result.storage_path_id}"
+        diffs.append(("Speicherpfad", curr_name, sugg_name))
+
+    current_tags = set(doc.tags)
+    suggested_tags = set(result.tag_ids)
+    if current_tags != suggested_tags:
+        curr_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(current_tags) if state.taxonomy.tag_by_id(t)) or "–"
+        sugg_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(suggested_tags) if state.taxonomy.tag_by_id(t)) or "–"
+        diffs.append(("Tags", curr_names, sugg_names))
+
+    return templates.TemplateResponse(
+        request,
+        "partials/audit_diff.html",
+        {
+            "doc": doc,
+            "result": result,
+            "diffs": diffs,
+            "taxonomy": state.taxonomy,
+        },
+    )
+
+
+@app.post("/audit/{doc_id}/apply-suggestion")
+async def audit_apply_suggestion(request: Request, doc_id: int):
+    """Apply AI suggestion to a document and record feedback."""
+    doc = await state.paperless.get_document(doc_id)
+    suggestion = state.db.get_suggestion(doc_id)
+    if not suggestion:
+        return HTMLResponse('<span class="chip chip-rose text-xs">❌ Kein Vorschlag vorhanden</span>')
+
+    # Remove inbox tag if present
+    tags = [t for t in suggestion.tag_ids if t != state.taxonomy.inbox_tag_id]
+
+    await state.paperless.update_document(
+        doc_id,
+        title=suggestion.title,
+        correspondent=suggestion.correspondent_id,
+        document_type=suggestion.document_type_id,
+        storage_path=suggestion.storage_path_id,
+        tags=tags,
+    )
+
+    state.db.record_feedback(
+        doc_id,
+        action="apply",
+        suggestion=suggestion,
+        final_title=suggestion.title,
+        final_correspondent_id=suggestion.correspondent_id,
+        final_document_type_id=suggestion.document_type_id,
+        final_storage_path_id=suggestion.storage_path_id,
+        final_tag_ids=tags,
+        content_preview=doc.content[:500] if doc.content else "",
+    )
+    state.db.clear_suggestion(doc_id)
+
+    return HTMLResponse(
+        '<span class="chip chip-green text-xs">✅ KI-Vorschlag angewendet</span>'
+    )
+
+
+@app.post("/audit/batch-classify")
+async def audit_batch_classify(request: Request):
+    """Classify a batch of document IDs and return summary."""
+    form = await request.form()
+    doc_ids = [int(x) for x in form.get("doc_ids", "").split(",") if x.strip()]
+    if not doc_ids:
+        return JSONResponse({"classified": 0, "diffs": 0})
+
+    classified = 0
+    diffs = 0
+    for doc_id in doc_ids:
+        try:
+            doc = await state.paperless.get_document(doc_id)
+            if state.db.get_suggestion(doc_id) is None:
+                result = await state.classifier.classify(
+                    doc.content, state.taxonomy,
+                    original_title=doc.title,
+                    filename=doc.original_file_name or "",
+                    db=state.db,
+                )
+                state.db.set_suggestion(doc_id, result)
+            else:
+                result = state.db.get_suggestion(doc_id)
+
+            classified += 1
+            # Check for differences
+            if result:
+                has_diff = (
+                    (result.title and result.title != doc.title)
+                    or (result.correspondent_id and result.correspondent_id != doc.correspondent)
+                    or (result.document_type_id and result.document_type_id != doc.document_type)
+                    or (result.storage_path_id and result.storage_path_id != doc.storage_path)
+                    or (set(result.tag_ids) != set(doc.tags))
+                )
+                if has_diff:
+                    diffs += 1
+        except Exception as e:
+            logger.error("Audit batch classify failed for doc %d: %s", doc_id, e)
+
+    return JSONResponse({"classified": classified, "diffs": diffs})
+
+
+# ---------------------------------------------------------------------------
 # Learning dashboard & rules
 # ---------------------------------------------------------------------------
 
