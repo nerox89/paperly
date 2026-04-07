@@ -560,6 +560,18 @@ class Database:
         assert self._conn
         return self._conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]
 
+    def get_confirmed_doc_ids(self, doc_ids: list[int]) -> set[int]:
+        """Return which of the given doc IDs have feedback recorded."""
+        assert self._conn
+        if not doc_ids:
+            return set()
+        placeholders = ",".join("?" * len(doc_ids))
+        rows = self._conn.execute(
+            f"SELECT DISTINCT doc_id FROM feedback WHERE doc_id IN ({placeholders})",
+            doc_ids,
+        ).fetchall()
+        return {r[0] for r in rows}
+
     def get_recent_feedback(self, limit: int = 20) -> list[dict]:
         """Return recent feedback entries for the dashboard."""
         assert self._conn

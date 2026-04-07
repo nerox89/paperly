@@ -972,6 +972,32 @@ async def test_ollama(request: Request):
 # Audit — review all documents for consistent tagging
 # ---------------------------------------------------------------------------
 
+def _compute_doc_diffs(doc: Document, suggestion: ClassificationResult) -> list[tuple[str, str, str]]:
+    """Compute field-level diffs between current doc metadata and AI suggestion."""
+    diffs = []
+    if suggestion.title and suggestion.title != doc.title:
+        diffs.append(("Titel", doc.title, suggestion.title))
+    if suggestion.correspondent_id and suggestion.correspondent_id != doc.correspondent:
+        curr = state.taxonomy.correspondent_by_id(doc.correspondent)
+        sugg = state.taxonomy.correspondent_by_id(suggestion.correspondent_id)
+        diffs.append(("Absender", curr.name if curr else "–", sugg.name if sugg else suggestion.correspondent_name or f"ID {suggestion.correspondent_id}"))
+    if suggestion.document_type_id and suggestion.document_type_id != doc.document_type:
+        curr = state.taxonomy.document_type_by_id(doc.document_type) if doc.document_type else None
+        sugg = state.taxonomy.document_type_by_id(suggestion.document_type_id)
+        diffs.append(("Dokumenttyp", curr.name if curr else "–", sugg.name if sugg else f"ID {suggestion.document_type_id}"))
+    if suggestion.storage_path_id and suggestion.storage_path_id != doc.storage_path:
+        curr = state.taxonomy.storage_path_by_id(doc.storage_path) if doc.storage_path else None
+        sugg = state.taxonomy.storage_path_by_id(suggestion.storage_path_id)
+        diffs.append(("Speicherpfad", curr.name if curr else "–", sugg.name if sugg else f"ID {suggestion.storage_path_id}"))
+    current_tags = set(doc.tags)
+    suggested_tags = set(suggestion.tag_ids)
+    if current_tags != suggested_tags:
+        curr_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(current_tags) if state.taxonomy.tag_by_id(t)) or "–"
+        sugg_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(suggested_tags) if state.taxonomy.tag_by_id(t)) or "–"
+        diffs.append(("Tags", curr_names, sugg_names))
+    return diffs
+
+
 @app.get("/audit", response_class=HTMLResponse)
 async def audit_view(
     request: Request,
@@ -982,6 +1008,7 @@ async def audit_view(
     tag: int | None = None,
     search: str | None = None,
     scope: str = "processed",
+    show: str = "all",
 ):
     """Browse all documents with filters for audit/review."""
     await _ensure_fresh_taxonomy()
@@ -1000,12 +1027,46 @@ async def audit_view(
         search=search,
     )
 
-    # Check which docs already have cached AI suggestions
-    doc_suggestions = {}
+    # Pre-compute status for each doc
+    doc_ids = [d.id for d in docs]
+    confirmed_ids = state.db.get_confirmed_doc_ids(doc_ids)
+
+    # status: "confirmed" | "agree" | "differs" | "unchecked"
+    # diffs: list of (field, current, suggested) tuples
+    doc_status: dict[int, dict] = {}
     for doc in docs:
-        s = state.db.get_suggestion(doc.id)
-        if s:
-            doc_suggestions[doc.id] = s
+        suggestion = state.db.get_suggestion(doc.id)
+        if doc.id in confirmed_ids and not suggestion:
+            doc_status[doc.id] = {"status": "confirmed", "diffs": [], "suggestion": None}
+        elif suggestion:
+            diffs = _compute_doc_diffs(doc, suggestion)
+            if diffs:
+                doc_status[doc.id] = {"status": "differs", "diffs": diffs, "suggestion": suggestion}
+            else:
+                doc_status[doc.id] = {"status": "agree", "diffs": [], "suggestion": suggestion}
+        else:
+            doc_status[doc.id] = {"status": "unchecked", "diffs": [], "suggestion": None}
+
+    # Filter docs if show=changes
+    if show == "changes":
+        docs = [d for d in docs if doc_status[d.id]["status"] == "differs"]
+    elif show == "unchecked":
+        docs = [d for d in docs if doc_status[d.id]["status"] == "unchecked"]
+
+    # Count statuses for summary
+    status_counts = {"confirmed": 0, "agree": 0, "differs": 0, "unchecked": 0}
+    for ds in doc_status.values():
+        status_counts[ds["status"]] += 1
+
+    filters = {
+        "correspondent": correspondent,
+        "document_type": document_type,
+        "storage_path": storage_path,
+        "tag": tag,
+        "search": search or "",
+        "scope": scope,
+        "show": show,
+    }
 
     return templates.TemplateResponse(
         request,
@@ -1016,15 +1077,10 @@ async def audit_view(
             "page": page,
             "page_size": 25,
             "taxonomy": state.taxonomy,
-            "doc_suggestions": doc_suggestions,
-            "filters": {
-                "correspondent": correspondent,
-                "document_type": document_type,
-                "storage_path": storage_path,
-                "tag": tag,
-                "search": search or "",
-                "scope": scope,
-            },
+            "doc_status": doc_status,
+            "status_counts": status_counts,
+            "filters": filters,
+            "filter_query": "&".join(f"{k}={v}" for k, v in filters.items() if v and v != "all" and v != "processed"),
         },
     )
 
@@ -1038,10 +1094,10 @@ async def audit_confirm(request: Request, doc_id: int):
     from paperly.classifier import ClassificationResult
     pseudo_suggestion = ClassificationResult(
         title=doc.title,
+        created=doc.created,
         correspondent_id=doc.correspondent,
         correspondent_name="",
         tag_ids=doc.tags,
-        new_tags=[],
         document_type_id=doc.document_type,
         storage_path_id=doc.storage_path,
         confidence=1.0,
@@ -1085,29 +1141,7 @@ async def audit_classify(request: Request, doc_id: int):
             f'<span class="chip chip-rose text-xs">❌ Fehler: {e}</span>'
         )
 
-    # Build diff between current metadata and AI suggestion
-    diffs = []
-    if result.title and result.title != doc.title:
-        diffs.append(("Titel", doc.title, result.title))
-    if result.correspondent_id and result.correspondent_id != doc.correspondent:
-        curr_name = state.taxonomy.correspondent_by_id(doc.correspondent).name if doc.correspondent and state.taxonomy.correspondent_by_id(doc.correspondent) else "–"
-        sugg_name = state.taxonomy.correspondent_by_id(result.correspondent_id).name if state.taxonomy.correspondent_by_id(result.correspondent_id) else result.correspondent_name
-        diffs.append(("Absender", curr_name, sugg_name))
-    if result.document_type_id and result.document_type_id != doc.document_type:
-        curr_name = state.taxonomy.document_type_by_id(doc.document_type).name if doc.document_type and state.taxonomy.document_type_by_id(doc.document_type) else "–"
-        sugg_name = state.taxonomy.document_type_by_id(result.document_type_id).name if state.taxonomy.document_type_by_id(result.document_type_id) else f"ID {result.document_type_id}"
-        diffs.append(("Dokumenttyp", curr_name, sugg_name))
-    if result.storage_path_id and result.storage_path_id != doc.storage_path:
-        curr_name = state.taxonomy.storage_path_by_id(doc.storage_path).name if doc.storage_path and state.taxonomy.storage_path_by_id(doc.storage_path) else "–"
-        sugg_name = state.taxonomy.storage_path_by_id(result.storage_path_id).name if state.taxonomy.storage_path_by_id(result.storage_path_id) else f"ID {result.storage_path_id}"
-        diffs.append(("Speicherpfad", curr_name, sugg_name))
-
-    current_tags = set(doc.tags)
-    suggested_tags = set(result.tag_ids)
-    if current_tags != suggested_tags:
-        curr_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(current_tags) if state.taxonomy.tag_by_id(t)) or "–"
-        sugg_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(suggested_tags) if state.taxonomy.tag_by_id(t)) or "–"
-        diffs.append(("Tags", curr_names, sugg_names))
+    diffs = _compute_doc_diffs(doc, result)
 
     return templates.TemplateResponse(
         request,
@@ -1199,6 +1233,54 @@ async def audit_batch_classify(request: Request):
             logger.error("Audit batch classify failed for doc %d: %s", doc_id, e)
 
     return JSONResponse({"classified": classified, "diffs": diffs})
+
+
+@app.post("/audit/batch-confirm")
+async def audit_batch_confirm(request: Request):
+    """Confirm all docs on the page where AI agrees (no diffs). Feeds learning."""
+    form = await request.form()
+    doc_ids = [int(x) for x in form.get("doc_ids", "").split(",") if x.strip()]
+
+    confirmed = 0
+    for doc_id in doc_ids:
+        try:
+            doc = await state.paperless.get_document(doc_id)
+            suggestion = state.db.get_suggestion(doc_id)
+            if not suggestion:
+                continue
+            diffs = _compute_doc_diffs(doc, suggestion)
+            if diffs:
+                continue  # skip docs with differences
+
+            pseudo_suggestion = ClassificationResult(
+                title=doc.title,
+                created=doc.created,
+                correspondent_id=doc.correspondent,
+                correspondent_name="",
+                tag_ids=doc.tags,
+                document_type_id=doc.document_type,
+                storage_path_id=doc.storage_path,
+                confidence=1.0,
+                reasoning="Batch confirmed during audit (AI agreed)",
+                provider_name="audit",
+                provider_model="manual",
+            )
+            state.db.record_feedback(
+                doc_id,
+                action="accept",
+                suggestion=pseudo_suggestion,
+                final_title=doc.title,
+                final_correspondent_id=doc.correspondent,
+                final_document_type_id=doc.document_type,
+                final_storage_path_id=doc.storage_path,
+                final_tag_ids=doc.tags,
+                content_preview=doc.content[:500] if doc.content else "",
+            )
+            confirmed += 1
+        except Exception as e:
+            logger.error("Audit batch confirm failed for doc %d: %s", doc_id, e)
+
+    return JSONResponse({"confirmed": confirmed})
 
 
 # ---------------------------------------------------------------------------
