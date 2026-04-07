@@ -191,6 +191,13 @@
         <!-- Actions -->
         <div class="flex items-center gap-1.5 shrink-0" id="audit-actions-{{ doc.id }}">
           {% if ds.status == 'confirmed' %}
+            <a href="/document/{{ doc.id }}" class="btn-ghost text-xs px-2 py-1" title="Bearbeiten">✏️</a>
+            <button hx-post="/audit/{{ doc.id }}/create-template"
+                    hx-target="#audit-result-{{ doc.id }}"
+                    hx-swap="innerHTML"
+                    class="btn-ghost text-xs px-2 py-1" title="Als Vorlage für ähnliche Dokumente">
+              📌
+            </button>
             <span class="chip chip-cyan text-xs">🔵 Bestätigt</span>
           {% elif ds.status == 'differs' %}
             <button hx-post="/audit/{{ doc.id }}/apply-suggestion"
@@ -199,6 +206,7 @@
                     class="btn-neon text-xs px-2 py-1" title="KI-Vorschlag übernehmen">
               ✨ Übernehmen
             </button>
+            <a href="/document/{{ doc.id }}" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
             <button hx-post="/audit/{{ doc.id }}/confirm"
                     hx-target="#audit-actions-{{ doc.id }}"
                     hx-swap="innerHTML"
@@ -212,6 +220,12 @@
                     class="btn-ghost text-xs px-2 py-1" title="Bestätigen für Training">
               ✅ Bestätigen
             </button>
+            <button hx-post="/audit/{{ doc.id }}/create-template"
+                    hx-target="#audit-result-{{ doc.id }}"
+                    hx-swap="innerHTML"
+                    class="btn-ghost text-xs px-2 py-1" title="Als Vorlage für ähnliche Dokumente">
+              📌
+            </button>
           {% else %}
             <button hx-post="/audit/{{ doc.id }}/classify"
                     hx-target="#audit-result-{{ doc.id }}"
@@ -220,6 +234,7 @@
                     class="btn-neon text-xs px-2 py-1" title="KI-Vorschlag anfordern">
               🤖 Prüfen
             </button>
+            <a href="/document/{{ doc.id }}" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
             <button hx-post="/audit/{{ doc.id }}/confirm"
                     hx-target="#audit-actions-{{ doc.id }}"
                     hx-swap="innerHTML"

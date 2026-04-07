@@ -1193,6 +1193,45 @@ async def audit_apply_suggestion(request: Request, doc_id: int):
     )
 
 
+@app.post("/audit/{doc_id}/create-template")
+async def audit_create_template(request: Request, doc_id: int):
+    """Create a correction rule from a document's current metadata as a reusable template."""
+    doc = await state.paperless.get_document(doc_id)
+
+    # Build human-readable description of the doc's metadata
+    corr = state.taxonomy.correspondent_by_id(doc.correspondent) if doc.correspondent else None
+    dt = state.taxonomy.document_type_by_id(doc.document_type) if doc.document_type else None
+    sp = state.taxonomy.storage_path_by_id(doc.storage_path) if doc.storage_path else None
+    tag_names = [state.taxonomy.tag_by_id(t).name for t in doc.tags
+                 if state.taxonomy.tag_by_id(t) and state.taxonomy.tag_by_id(t).name != "INBOX"]
+
+    # Build prompt text
+    parts = []
+    scope = corr.name if corr else doc.title[:40]
+    if corr:
+        parts.append(f'Absender: "{corr.name}" (ID {corr.id})')
+    if dt:
+        parts.append(f'Dokumenttyp: "{dt.name}" (ID {dt.id})')
+    if sp:
+        parts.append(f'Speicherpfad: "{sp.name}" (ID {sp.id})')
+    if tag_names:
+        tag_parts = ", ".join(f'"{n}" (ID {t})' for n, t in zip(tag_names, [tid for tid in doc.tags if state.taxonomy.tag_by_id(tid) and state.taxonomy.tag_by_id(tid).name != "INBOX"]))
+        parts.append(f"Tags: {tag_parts}")
+
+    prompt_text = f'Für Dokumente von "{scope}" verwende immer:\n' + "\n".join(f"- {p}" for p in parts)
+    description = f"Vorlage: {scope} → {dt.name if dt else '?'}"
+
+    return templates.TemplateResponse(
+        request,
+        "partials/audit_template_form.html",
+        {
+            "doc": doc,
+            "description": description,
+            "prompt_text": prompt_text,
+        },
+    )
+
+
 @app.post("/audit/batch-classify")
 async def audit_batch_classify(request: Request):
     """Classify a batch of document IDs and return summary."""

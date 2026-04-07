@@ -1,0 +1,23 @@
+<!-- Inline form to save a document's metadata as a correction rule template -->
+<div class="mt-3 p-4 rounded-lg bg-violet-500/5 border border-violet-500/20 space-y-3">
+  <div class="flex items-center gap-2">
+    <span class="text-sm font-mono text-violet-400">📌 Als Vorlage speichern</span>
+    <span class="text-xs text-slate-500">Diese Metadaten werden als Regel für zukünftige Dokumente verwendet</span>
+  </div>
+
+  <form method="post" action="/learning/rules/add" class="space-y-2">
+    <input type="hidden" name="rule_type" value="general">
+    <div>
+      <label class="block text-xs font-mono text-slate-500 mb-1">Beschreibung</label>
+      <input type="text" name="description" class="input-dark text-xs" value="{{ description }}">
+    </div>
+    <div>
+      <label class="block text-xs font-mono text-slate-500 mb-1">Prompt-Text (anpassbar)</label>
+      <textarea name="prompt_text" rows="4" class="input-dark font-mono text-xs">{{ prompt_text }}</textarea>
+    </div>
+    <div class="flex items-center gap-2">
+      <button type="submit" class="btn-violet text-xs px-3 py-1.5">📌 Regel speichern</button>
+      <span class="text-xs text-slate-500">→ wird unter 🧠 Lernen → Korrekturregeln gespeichert</span>
+    </div>
+  </form>
+</div>
