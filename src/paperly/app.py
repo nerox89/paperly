@@ -1002,29 +1002,35 @@ def _compute_doc_diffs(doc: Document, suggestion: ClassificationResult) -> list[
 async def audit_view(
     request: Request,
     page: int = 1,
-    correspondent: int | None = None,
-    document_type: int | None = None,
-    storage_path: int | None = None,
-    tag: int | None = None,
-    search: str | None = None,
+    correspondent: str = "",
+    document_type: str = "",
+    storage_path: str = "",
+    tag: str = "",
+    search: str = "",
     scope: str = "processed",
     show: str = "all",
 ):
     """Browse all documents with filters for audit/review."""
     await _ensure_fresh_taxonomy()
 
+    # Parse optional int filters (HTML sends "" for unselected)
+    correspondent_id = int(correspondent) if correspondent else None
+    document_type_id = int(document_type) if document_type else None
+    storage_path_id = int(storage_path) if storage_path else None
+    tag_id = int(tag) if tag else None
+
     exclude_tag = state.taxonomy.inbox_tag_id if scope == "processed" else None
-    only_tag = state.taxonomy.inbox_tag_id if scope == "inbox" else (tag or None)
+    only_tag = state.taxonomy.inbox_tag_id if scope == "inbox" else tag_id
 
     docs, total = await state.paperless.get_documents(
         page=page,
         page_size=25,
-        correspondent_id=correspondent,
-        document_type_id=document_type,
-        storage_path_id=storage_path,
+        correspondent_id=correspondent_id,
+        document_type_id=document_type_id,
+        storage_path_id=storage_path_id,
         tag_id=only_tag,
         exclude_tag_id=exclude_tag,
-        search=search,
+        search=search or None,
     )
 
     # Pre-compute status for each doc
@@ -1059,10 +1065,10 @@ async def audit_view(
         status_counts[ds["status"]] += 1
 
     filters = {
-        "correspondent": correspondent,
-        "document_type": document_type,
-        "storage_path": storage_path,
-        "tag": tag,
+        "correspondent": correspondent_id,
+        "document_type": document_type_id,
+        "storage_path": storage_path_id,
+        "tag": tag_id,
         "search": search or "",
         "scope": scope,
         "show": show,
