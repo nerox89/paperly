@@ -188,26 +188,41 @@
   <div class="glass rounded-xl p-6 border border-amber-500/20 space-y-4">
     <h2 class="text-lg font-mono font-semibold text-amber-300">💡 Erkannte Muster</h2>
     <p class="text-xs text-slate-400">
-      Diese Korrekturmuster wurden erkannt. Akzeptiere sie als Regeln, um zukünftige Klassifizierungen zu verbessern.
+      Diese Korrekturmuster wurden erkannt. Prüfe den Kontext und passe den Prompt-Text ggf. an, bevor du sie als Regel übernimmst.
     </p>
     {% for p in new_patterns %}
-    <div class="flex items-center gap-3 p-3 rounded-lg bg-white/5">
-      <div class="flex-1">
+    <div class="p-4 rounded-lg bg-white/5 space-y-3">
+      <div class="flex items-center gap-3">
         <span class="chip {% if p.rule_type == 'correspondent' %}chip-violet{% else %}chip-green{% endif %} text-xs">
           {{ 'Absender' if p.rule_type == 'correspondent' else 'Dokumenttyp' }}
         </span>
-        <span class="text-sm text-slate-300 ml-2">
-          ID {{ p.from_id }} → ID {{ p.to_id }}
-          <span class="text-slate-500">({{ p.count }}× korrigiert)</span>
+        <span class="text-sm text-slate-200 font-medium">
+          {{ p.from_name }} → {{ p.to_name }}
         </span>
+        <span class="text-xs text-slate-500">({{ p.count }}× korrigiert)</span>
       </div>
-      <form method="post" action="/learning/patterns/accept">
+
+      {% if p.example_titles %}
+      <div class="text-xs text-slate-400">
+        <span class="text-slate-500 font-mono">Beispiele:</span>
+        {% for title in p.example_titles[:3] %}
+          <span class="chip text-xs ml-1">{{ title[:50] }}{% if title|length > 50 %}…{% endif %}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <form method="post" action="/learning/patterns/accept" class="space-y-2">
         <input type="hidden" name="source_pattern" value="{{ p.source_pattern }}">
-        <input type="hidden" name="description"
-               value="Auto: {{ p.rule_type }} {{ p.from_id }} → {{ p.to_id }} ({{ p.count }}× korrigiert)">
-        <input type="hidden" name="prompt_text"
-               value="Wenn du {{ 'Absender' if p.rule_type == 'correspondent' else 'Dokumenttyp' }} ID {{ p.from_id }} vorschlagen würdest, verwende stattdessen ID {{ p.to_id }}.">
-        <button type="submit" class="btn-neon text-xs px-3 py-1">Übernehmen</button>
+        <div>
+          <label class="block text-xs font-mono text-slate-500 mb-1">Beschreibung</label>
+          <input type="text" name="description" class="input-dark text-xs"
+                 value="{{ p.suggested_description }}">
+        </div>
+        <div>
+          <label class="block text-xs font-mono text-slate-500 mb-1">Prompt-Text (wird an KI gesendet — anpassen für Kontext!)</label>
+          <textarea name="prompt_text" rows="2" class="input-dark font-mono text-xs">{{ p.suggested_prompt }}</textarea>
+        </div>
+        <button type="submit" class="btn-neon text-xs px-3 py-1">Als Regel übernehmen</button>
       </form>
     </div>
     {% endfor %}
@@ -224,25 +239,48 @@
     {% if rules %}
     <div class="space-y-2">
       {% for r in rules %}
-      <div class="flex items-center gap-3 p-3 rounded-lg {% if r.active %}bg-white/5{% else %}bg-white/[0.02] opacity-50{% endif %}">
-        <div class="flex-1">
-          <div class="text-sm {% if r.active %}text-slate-200{% else %}text-slate-500{% endif %}">
-            {{ r.description }}
+      <div class="p-3 rounded-lg {% if r.active %}bg-white/5{% else %}bg-white/[0.02] opacity-50{% endif %}">
+        <!-- Display mode -->
+        <div class="flex items-center gap-3" id="rule-display-{{ r.id }}">
+          <div class="flex-1">
+            <div class="text-sm {% if r.active %}text-slate-200{% else %}text-slate-500{% endif %}">
+              {{ r.description }}
+            </div>
+            <div class="text-xs text-slate-500 mt-0.5 font-mono">
+              {{ r.prompt_text[:100] }}{% if r.prompt_text | length > 100 %}…{% endif %}
+              · {{ r.hit_count }}× verwendet
+              {% if r.auto_generated %}<span class="chip-amber text-xs ml-1">auto</span>{% endif %}
+            </div>
           </div>
-          <div class="text-xs text-slate-500 mt-0.5 font-mono">
-            {{ r.prompt_text[:80] }}{% if r.prompt_text | length > 80 %}…{% endif %}
-            · {{ r.hit_count }}× verwendet
-            {% if r.auto_generated %}<span class="chip-amber text-xs ml-1">auto</span>{% endif %}
-          </div>
+          <button onclick="document.getElementById('rule-edit-{{ r.id }}').classList.toggle('hidden'); document.getElementById('rule-display-{{ r.id }}').classList.toggle('hidden')"
+                  class="btn-ghost text-xs px-2 py-1" title="Bearbeiten">✏️</button>
+          <form method="post" action="/learning/rules/{{ r.id }}/toggle" class="inline">
+            <button type="submit" class="btn-ghost text-xs px-2 py-1" title="{{ 'Deaktivieren' if r.active else 'Aktivieren' }}">
+              {{ '✅' if r.active else '❌' }}
+            </button>
+          </form>
+          <form method="post" action="/learning/rules/{{ r.id }}/delete" class="inline"
+                onsubmit="return confirm('Regel löschen?')">
+            <button type="submit" class="btn-ghost text-xs px-2 py-1 text-rose-400" title="Löschen">🗑</button>
+          </form>
         </div>
-        <form method="post" action="/learning/rules/{{ r.id }}/toggle" class="inline">
-          <button type="submit" class="btn-ghost text-xs px-2 py-1" title="{{ 'Deaktivieren' if r.active else 'Aktivieren' }}">
-            {{ '✅' if r.active else '❌' }}
-          </button>
-        </form>
-        <form method="post" action="/learning/rules/{{ r.id }}/delete" class="inline"
-              onsubmit="return confirm('Regel löschen?')">
-          <button type="submit" class="btn-ghost text-xs px-2 py-1 text-rose-400" title="Löschen">🗑</button>
+
+        <!-- Edit mode (hidden by default) -->
+        <form method="post" action="/learning/rules/{{ r.id }}/edit" id="rule-edit-{{ r.id }}" class="hidden space-y-2 mt-2">
+          <div>
+            <label class="block text-xs font-mono text-slate-500 mb-1">Beschreibung</label>
+            <input type="text" name="description" class="input-dark text-xs" value="{{ r.description }}">
+          </div>
+          <div>
+            <label class="block text-xs font-mono text-slate-500 mb-1">Prompt-Text</label>
+            <textarea name="prompt_text" rows="3" class="input-dark font-mono text-xs">{{ r.prompt_text }}</textarea>
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="submit" class="btn-neon text-xs px-3 py-1">Speichern</button>
+            <button type="button"
+                    onclick="document.getElementById('rule-edit-{{ r.id }}').classList.add('hidden'); document.getElementById('rule-display-{{ r.id }}').classList.remove('hidden')"
+                    class="btn-ghost text-xs px-3 py-1">Abbrechen</button>
+          </div>
         </form>
       </div>
       {% endfor %}

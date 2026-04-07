@@ -994,6 +994,35 @@ async def learning_dashboard(request: Request):
     rules = state.db.get_all_rules()
     new_patterns = state.db.detect_correction_patterns(min_occurrences=3)
 
+    # Resolve names and generate context-aware prompt text for patterns
+    for p in new_patterns:
+        if p["rule_type"] == "correspondent":
+            from_obj = state.taxonomy.correspondent_by_id(p["from_id"])
+            to_obj = state.taxonomy.correspondent_by_id(p["to_id"])
+            p["from_name"] = from_obj.name if from_obj else f"ID {p['from_id']}"
+            p["to_name"] = to_obj.name if to_obj else f"ID {p['to_id']}"
+            label = "Absender"
+        else:
+            from_obj = state.taxonomy.document_type_by_id(p["from_id"])
+            to_obj = state.taxonomy.document_type_by_id(p["to_id"])
+            p["from_name"] = from_obj.name if from_obj else f"ID {p['from_id']}"
+            p["to_name"] = to_obj.name if to_obj else f"ID {p['to_id']}"
+            label = "Dokumenttyp"
+
+        titles = p.get("example_titles", [])
+        context_hint = ""
+        if titles:
+            examples_str = ", ".join(f'"{t}"' for t in titles[:3])
+            context_hint = f" Betrifft Dokumente wie: {examples_str}."
+
+        p["suggested_description"] = (
+            f"{label}: {p['from_name']} → {p['to_name']} ({p['count']}× korrigiert)"
+        )
+        p["suggested_prompt"] = (
+            f"Wenn du {label} \"{p['from_name']}\" (ID {p['from_id']}) vorschlagen würdest, "
+            f"verwende stattdessen \"{p['to_name']}\" (ID {p['to_id']}).{context_hint}"
+        )
+
     return templates.TemplateResponse(
         request,
         "learning.html",
@@ -1033,6 +1062,18 @@ async def toggle_rule(rule_id: int):
 async def delete_rule(rule_id: int):
     """Delete a correction rule."""
     state.db.delete_rule(rule_id)
+    return RedirectResponse("/learning", status_code=303)
+
+
+@app.post("/learning/rules/{rule_id}/edit")
+async def edit_rule(
+    rule_id: int,
+    description: Annotated[str, Form()] = "",
+    prompt_text: Annotated[str, Form()] = "",
+):
+    """Edit description and prompt text of a correction rule."""
+    if description.strip() and prompt_text.strip():
+        state.db.update_rule(rule_id, description.strip(), prompt_text.strip())
     return RedirectResponse("/learning", status_code=303)
 
 

@@ -458,6 +458,15 @@ class Database:
         )
         self._conn.commit()
 
+    def update_rule(self, rule_id: int, description: str, prompt_text: str) -> None:
+        """Update description and prompt_text of a rule."""
+        assert self._conn
+        self._conn.execute(
+            "UPDATE correction_rules SET description = ?, prompt_text = ? WHERE id = ?",
+            (description, prompt_text, rule_id),
+        )
+        self._conn.commit()
+
     def delete_rule(self, rule_id: int) -> None:
         assert self._conn
         self._conn.execute("DELETE FROM correction_rules WHERE id = ?", (rule_id,))
@@ -475,7 +484,10 @@ class Database:
         self._conn.commit()
 
     def detect_correction_patterns(self, min_occurrences: int = 3) -> list[dict]:
-        """Analyze feedback to find recurring corrections that could become rules."""
+        """Analyze feedback to find recurring corrections that could become rules.
+        
+        Includes example document titles for context.
+        """
         assert self._conn
         existing_rules = {r["source_pattern"] for r in self.get_all_rules()}
         new_patterns = []
@@ -495,10 +507,20 @@ class Database:
         for r in rows:
             pattern = json.dumps({"type": "correspondent", "from": r[0], "to": r[1]})
             if pattern not in existing_rules:
+                examples = self._conn.execute(
+                    """SELECT COALESCE(final_title, suggested_title, '') as title
+                       FROM feedback
+                       WHERE correspondent_changed = 1
+                         AND suggested_correspondent_id = ?
+                         AND final_correspondent_id = ?
+                       ORDER BY created_at DESC LIMIT 5""",
+                    (r[0], r[1]),
+                ).fetchall()
                 new_patterns.append({
                     "rule_type": "correspondent",
                     "from_id": r[0], "to_id": r[1], "count": r[2],
                     "source_pattern": pattern,
+                    "example_titles": [e[0] for e in examples if e[0]],
                 })
 
         # Document type swaps
@@ -516,10 +538,20 @@ class Database:
         for r in rows:
             pattern = json.dumps({"type": "document_type", "from": r[0], "to": r[1]})
             if pattern not in existing_rules:
+                examples = self._conn.execute(
+                    """SELECT COALESCE(final_title, suggested_title, '') as title
+                       FROM feedback
+                       WHERE document_type_changed = 1
+                         AND suggested_document_type_id = ?
+                         AND final_document_type_id = ?
+                       ORDER BY created_at DESC LIMIT 5""",
+                    (r[0], r[1]),
+                ).fetchall()
                 new_patterns.append({
                     "rule_type": "document_type",
                     "from_id": r[0], "to_id": r[1], "count": r[2],
                     "source_pattern": pattern,
+                    "example_titles": [e[0] for e in examples if e[0]],
                 })
 
         return new_patterns
