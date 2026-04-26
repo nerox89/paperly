@@ -181,6 +181,57 @@ class AnthropicProvider(BaseProvider):
         raise last_error  # type: ignore[misc]
 
 
+class OpenAIProvider(BaseProvider):
+    """OpenAI-compatible provider — works with copilot-gateway or any OpenAI-compatible API."""
+
+    def __init__(self, api_key: str = "dummy", base_url: str = "http://copilot-gateway:8080/v1", model: str = "gpt-4o-mini") -> None:
+        from openai import OpenAI
+        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._model = model
+
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    async def generate(self, system: str, user_message: str) -> dict:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._call, system, user_message)
+
+    def _call(self, system: str, user_message: str) -> dict:
+        last_error: Exception | None = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self._model,
+                    max_tokens=600,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_message},
+                    ],
+                )
+                raw = response.choices[0].message.content.strip()
+                return _parse_json_response(raw)
+            except json.JSONDecodeError as e:
+                logger.warning("OpenAI returned invalid JSON (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_BASE_DELAY * attempt)
+                    continue
+                raise
+            except Exception as e:
+                logger.error("OpenAI API error (attempt %d/%d): %s", attempt, MAX_RETRIES, e)
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_BASE_DELAY * attempt)
+                    continue
+                raise
+        raise last_error  # type: ignore[misc]
+
+
 class OllamaProvider(BaseProvider):
     """Local Ollama instance via REST API."""
 

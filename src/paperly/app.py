@@ -23,6 +23,7 @@ from paperly.classifier import (
     Classifier,
     ClassificationResult,
     OllamaProvider,
+    OpenAIProvider,
 )
 from paperly.database import Database
 from paperly.paperless import Document, PaperlessClient, Taxonomy
@@ -83,6 +84,12 @@ def _build_provider(db: Database) -> BaseProvider:
         model = db.get_setting("ollama_model", os.environ.get("PAPERLY_OLLAMA_MODEL", "gemma4:e4b"))
         logger.info("Using Ollama provider: %s model=%s", url, model)
         return OllamaProvider(base_url=url, model=model)
+    elif provider_name == "openai":
+        api_key = db.get_setting("openai_api_key", os.environ.get("OPENAI_API_KEY", "dummy"))
+        base_url = db.get_setting("openai_base_url", os.environ.get("PAPERLY_OPENAI_BASE_URL", "http://copilot-gateway:8080/v1"))
+        model = db.get_setting("openai_model", os.environ.get("PAPERLY_OPENAI_MODEL", "gpt-4o-mini"))
+        logger.info("Using OpenAI-compatible provider: %s model=%s", base_url, model)
+        return OpenAIProvider(api_key=api_key, base_url=base_url, model=model)
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         model = db.get_setting("claude_model", os.environ.get("PAPERLY_CLAUDE_MODEL", "claude-haiku-4-5"))
@@ -878,6 +885,9 @@ async def settings_view(request: Request):
         "claude_model": state.db.get_setting("claude_model", os.environ.get("PAPERLY_CLAUDE_MODEL", "claude-haiku-4-5")),
         "ollama_url": state.db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434")),
         "ollama_model": state.db.get_setting("ollama_model", os.environ.get("PAPERLY_OLLAMA_MODEL", "gemma4:e4b")),
+        "openai_api_key": state.db.get_setting("openai_api_key", os.environ.get("OPENAI_API_KEY", "")),
+        "openai_base_url": state.db.get_setting("openai_base_url", os.environ.get("PAPERLY_OPENAI_BASE_URL", "http://copilot-gateway:8080/v1")),
+        "openai_model": state.db.get_setting("openai_model", os.environ.get("PAPERLY_OPENAI_MODEL", "gpt-4o-mini")),
         "custom_prompt": state.db.get_setting("custom_prompt", ""),
         "paperless_url": state.db.get_setting("paperless_url", os.environ.get("PAPERLESS_URL", "")),
         "paperless_token": state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", "")),
@@ -901,6 +911,9 @@ async def settings_save(
     claude_model: Annotated[str, Form()] = "claude-haiku-4-5",
     ollama_url: Annotated[str, Form()] = "http://localhost:11434",
     ollama_model: Annotated[str, Form()] = "gemma4:e4b",
+    openai_api_key: Annotated[str, Form()] = "",
+    openai_base_url: Annotated[str, Form()] = "http://copilot-gateway:8080/v1",
+    openai_model: Annotated[str, Form()] = "gpt-4o-mini",
     custom_prompt: Annotated[str, Form()] = "",
     paperless_url: Annotated[str, Form()] = "",
     paperless_token: Annotated[str, Form()] = "",
@@ -911,6 +924,10 @@ async def settings_save(
     state.db.set_setting("claude_model", claude_model)
     state.db.set_setting("ollama_url", ollama_url)
     state.db.set_setting("ollama_model", ollama_model)
+    state.db.set_setting("openai_base_url", openai_base_url.strip())
+    state.db.set_setting("openai_model", openai_model.strip())
+    if openai_api_key.strip():
+        state.db.set_setting("openai_api_key", openai_api_key.strip())
     state.db.set_setting("custom_prompt", custom_prompt.strip())
 
     # Save Paperless connection (only if provided — don't overwrite with blank)
@@ -939,6 +956,9 @@ async def settings_save(
         "claude_model": claude_model,
         "ollama_url": ollama_url,
         "ollama_model": ollama_model,
+        "openai_api_key": state.db.get_setting("openai_api_key", os.environ.get("OPENAI_API_KEY", "")),
+        "openai_base_url": openai_base_url.strip(),
+        "openai_model": openai_model.strip(),
         "custom_prompt": custom_prompt.strip(),
         "paperless_url": state.db.get_setting("paperless_url", os.environ.get("PAPERLESS_URL", "")),
         "paperless_token": state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", "")),

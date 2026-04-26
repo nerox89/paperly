@@ -56,7 +56,7 @@
     <div class="glass rounded-xl p-6 border border-white/5 space-y-4">
       <h2 class="text-lg font-mono font-semibold text-slate-200">Provider</h2>
 
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-3 gap-3">
         <label class="relative cursor-pointer">
           <input type="radio" name="ai_provider" value="claude"
                  {% if settings.ai_provider == 'claude' %}checked{% endif %}
@@ -76,6 +76,17 @@
           <div class="glass rounded-lg p-4 border border-white/5 peer-checked:border-violet-500/50 peer-checked:bg-violet-500/10 transition-all">
             <div class="font-mono font-semibold text-slate-200">🏠 Ollama</div>
             <div class="text-xs text-slate-400 mt-1">Lokales Modell (Gemma 4)</div>
+          </div>
+        </label>
+
+        <label class="relative cursor-pointer">
+          <input type="radio" name="ai_provider" value="openai"
+                 {% if settings.ai_provider == 'openai' %}checked{% endif %}
+                 class="peer sr-only"
+                 onchange="toggleProviderPanels()">
+          <div class="glass rounded-lg p-4 border border-white/5 peer-checked:border-emerald-500/50 peer-checked:bg-emerald-500/10 transition-all">
+            <div class="font-mono font-semibold text-slate-200">⚡ OpenAI</div>
+            <div class="text-xs text-slate-400 mt-1">OpenAI-kompatible API</div>
           </div>
         </label>
       </div>
@@ -131,6 +142,34 @@
       </div>
     </div>
 
+    <!-- OpenAI Settings -->
+    <div id="openai-settings" class="glass rounded-xl p-6 border border-white/5 space-y-4 {% if settings.ai_provider != 'openai' %}hidden{% endif %}">
+      <h2 class="text-lg font-mono font-semibold text-slate-200">OpenAI-Konfiguration</h2>
+
+      <div>
+        <label for="openai-base-url" class="block text-sm font-medium text-slate-400 mb-1">API Base URL</label>
+        <input type="text" name="openai_base_url" id="openai-base-url" value="{{ settings.openai_base_url }}"
+               class="input-dark w-full"
+               placeholder="http://copilot-gateway:8080/v1">
+        <p class="text-xs text-slate-500 mt-1">Copilot Gateway: <code class="text-emerald-500/70">http://copilot-gateway:8080/v1</code></p>
+      </div>
+
+      <div>
+        <label for="openai-model" class="block text-sm font-medium text-slate-400 mb-1">Modell</label>
+        <input type="text" name="openai_model" id="openai-model" value="{{ settings.openai_model }}"
+               class="input-dark w-full"
+               placeholder="gpt-4o-mini">
+        <p class="text-xs text-slate-500 mt-1">Für Copilot Gateway: beliebiger Modellname der vom Gateway unterstützt wird.</p>
+      </div>
+
+      <div>
+        <label for="openai-api-key" class="block text-sm font-medium text-slate-400 mb-1">API Key <span class="text-slate-500">(optional für Copilot Gateway)</span></label>
+        <input type="password" name="openai_api_key" id="openai-api-key" value="{{ settings.openai_api_key }}"
+               class="input-dark w-full"
+               placeholder="sk-... (leer lassen für Copilot Gateway)">
+      </div>
+    </div>
+
     <!-- Custom Prompt Instructions -->
     <div class="glass rounded-xl p-6 border border-white/5 space-y-4">
       <h2 class="text-lg font-mono font-semibold text-slate-200">Prompt-Anweisungen</h2>
@@ -164,6 +203,7 @@ function toggleProviderPanels() {
   const provider = document.querySelector('input[name="ai_provider"]:checked')?.value;
   document.getElementById('claude-settings').classList.toggle('hidden', provider !== 'claude');
   document.getElementById('ollama-settings').classList.toggle('hidden', provider !== 'ollama');
+  document.getElementById('openai-settings').classList.toggle('hidden', provider !== 'openai');
 }
 
 async function testOllama() {
