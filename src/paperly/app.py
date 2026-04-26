@@ -1349,10 +1349,10 @@ async def audit_batch_confirm(request: Request):
             if not suggestion:
                 continue
             diffs = _compute_doc_diffs(doc, suggestion)
-            if diffs:
+            # For inbox docs (not yet reviewed), always apply — no conflict possible
+            is_inbox = state.taxonomy.inbox_tag_id in doc.tags
+            if diffs and not is_inbox:
                 continue  # skip docs with differences
-
-            # Apply suggestion to Paperless (remove inbox tag)
             tags = [t for t in suggestion.tag_ids if t != state.taxonomy.inbox_tag_id]
             await state.paperless.update_document(
                 doc_id,
