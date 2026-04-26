@@ -1043,8 +1043,8 @@ def _compute_doc_diffs(doc: Document, suggestion: ClassificationResult) -> list[
         curr = state.taxonomy.storage_path_by_id(doc.storage_path) if doc.storage_path else None
         sugg = state.taxonomy.storage_path_by_id(suggestion.storage_path_id)
         diffs.append(("Speicherpfad", curr.name if curr else "–", sugg.name if sugg else f"ID {suggestion.storage_path_id}"))
-    current_tags = set(doc.tags)
-    suggested_tags = set(suggestion.tag_ids)
+    current_tags = set(doc.tags) - {state.taxonomy.inbox_tag_id}
+    suggested_tags = set(suggestion.tag_ids) - {state.taxonomy.inbox_tag_id}
     if current_tags != suggested_tags:
         curr_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(current_tags) if state.taxonomy.tag_by_id(t)) or "–"
         sugg_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(suggested_tags) if state.taxonomy.tag_by_id(t)) or "–"
