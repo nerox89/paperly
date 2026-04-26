@@ -156,9 +156,23 @@
 
       <div>
         <label for="openai-model" class="block text-sm font-medium text-slate-400 mb-1">Modell</label>
-        <input type="text" name="openai_model" id="openai-model" value="{{ settings.openai_model }}"
-               class="input-dark w-full"
-               placeholder="gpt-4o-mini">
+        <div class="flex gap-2">
+          <input type="text" name="openai_model" id="openai-model" value="{{ settings.openai_model }}"
+                 class="input-dark flex-1"
+                 placeholder="gpt-4o-mini">
+          <button type="button" id="fetch-models-btn"
+                  onclick="fetchOpenAIModels()"
+                  class="px-4 py-2 rounded-lg text-sm font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors whitespace-nowrap">
+            Modelle laden
+          </button>
+        </div>
+        <div id="openai-model-list" class="mt-2 hidden">
+          <select id="openai-model-select"
+                  onchange="document.getElementById('openai-model').value = this.value"
+                  class="input-dark w-full text-sm">
+          </select>
+        </div>
+        <div id="openai-fetch-result" class="mt-2 text-sm hidden"></div>
         <p class="text-xs text-slate-500 mt-1">Für Copilot Gateway: beliebiger Modellname der vom Gateway unterstützt wird.</p>
       </div>
 
@@ -205,6 +219,64 @@ function toggleProviderPanels() {
   document.getElementById('ollama-settings').classList.toggle('hidden', provider !== 'ollama');
   document.getElementById('openai-settings').classList.toggle('hidden', provider !== 'openai');
 }
+
+async function fetchOpenAIModels() {
+  const btn = document.getElementById('fetch-models-btn');
+  const result = document.getElementById('openai-fetch-result');
+  const modelList = document.getElementById('openai-model-list');
+  const select = document.getElementById('openai-model-select');
+  const currentModel = document.getElementById('openai-model').value.trim();
+  const baseUrl = document.querySelector('input[name="openai_base_url"]').value.trim();
+  const apiKey = document.querySelector('input[name="openai_api_key"]').value.trim();
+
+  btn.disabled = true;
+  btn.textContent = '...';
+  result.classList.add('hidden');
+  modelList.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/settings/list-openai-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_url: baseUrl, api_key: apiKey })
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      select.innerHTML = '';
+      data.models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        if (m === currentModel) opt.selected = true;
+        select.appendChild(opt);
+      });
+      // If current model not in list, add it at top
+      if (currentModel && !data.models.includes(currentModel)) {
+        const opt = document.createElement('option');
+        opt.value = currentModel;
+        opt.textContent = currentModel + ' (aktuell)';
+        opt.selected = true;
+        select.insertBefore(opt, select.firstChild);
+      }
+      modelList.classList.remove('hidden');
+      result.className = 'mt-2 text-xs text-emerald-400';
+      result.textContent = '✓ ' + data.models.length + ' Modelle geladen';
+      result.classList.remove('hidden');
+    } else {
+      result.className = 'mt-2 text-sm text-rose-400';
+      result.textContent = '✗ ' + data.error;
+      result.classList.remove('hidden');
+    }
+  } catch (e) {
+    result.className = 'mt-2 text-sm text-rose-400';
+    result.textContent = '✗ Verbindung fehlgeschlagen: ' + e.message;
+    result.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Modelle laden';
+  }
+}
+
 
 async function testOllama() {
   const btn = document.getElementById('test-btn');

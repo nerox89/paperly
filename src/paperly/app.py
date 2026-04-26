@@ -995,9 +995,31 @@ async def test_ollama(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
 
 
-# ---------------------------------------------------------------------------
-# Audit — review all documents for consistent tagging
-# ---------------------------------------------------------------------------
+@app.post("/settings/list-openai-models")
+async def list_openai_models(request: Request):
+    """Fetch model list from an OpenAI-compatible endpoint."""
+    try:
+        body = await request.json()
+        base_url = body.get("base_url", "").strip()
+        api_key = body.get("api_key", "dummy").strip() or "dummy"
+    except Exception:
+        base_url = ""
+        api_key = "dummy"
+    if not base_url:
+        base_url = state.db.get_setting("openai_base_url", os.environ.get("PAPERLY_OPENAI_BASE_URL", "http://copilot-gateway:8080/v1"))
+    try:
+        from openai import OpenAI
+        import asyncio
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        loop = asyncio.get_event_loop()
+        models = await loop.run_in_executor(None, lambda: client.models.list())
+        ids = sorted(set(m.id for m in models.data))
+        return JSONResponse({"ok": True, "models": ids})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+
+
+
 
 def _compute_doc_diffs(doc: Document, suggestion: ClassificationResult) -> list[tuple[str, str, str]]:
     """Compute field-level diffs between current doc metadata and AI suggestion."""
