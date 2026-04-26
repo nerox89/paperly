@@ -1351,30 +1351,29 @@ async def audit_batch_confirm(request: Request):
             if diffs:
                 continue  # skip docs with differences
 
-            pseudo_suggestion = ClassificationResult(
-                title=doc.title,
-                created=doc.created,
-                correspondent_id=doc.correspondent,
-                correspondent_name="",
-                tag_ids=doc.tags,
-                document_type_id=doc.document_type,
-                storage_path_id=doc.storage_path,
-                confidence=1.0,
-                reasoning="Batch confirmed during audit (AI agreed)",
-                provider_name="audit",
-                provider_model="manual",
+            # Apply suggestion to Paperless (remove inbox tag)
+            tags = [t for t in suggestion.tag_ids if t != state.taxonomy.inbox_tag_id]
+            await state.paperless.update_document(
+                doc_id,
+                title=suggestion.title,
+                correspondent=suggestion.correspondent_id,
+                document_type=suggestion.document_type_id,
+                storage_path=suggestion.storage_path_id,
+                tags=tags,
             )
+
             state.db.record_feedback(
                 doc_id,
-                action="accept",
-                suggestion=pseudo_suggestion,
-                final_title=doc.title,
-                final_correspondent_id=doc.correspondent,
-                final_document_type_id=doc.document_type,
-                final_storage_path_id=doc.storage_path,
-                final_tag_ids=doc.tags,
+                action="apply",
+                suggestion=suggestion,
+                final_title=suggestion.title,
+                final_correspondent_id=suggestion.correspondent_id,
+                final_document_type_id=suggestion.document_type_id,
+                final_storage_path_id=suggestion.storage_path_id,
+                final_tag_ids=tags,
                 content_preview=doc.content[:500] if doc.content else "",
             )
+            state.db.clear_suggestion(doc_id)
             confirmed += 1
         except Exception as e:
             logger.error("Audit batch confirm failed for doc %d: %s", doc_id, e)
