@@ -1031,16 +1031,16 @@ def _compute_doc_diffs(doc: Document, suggestion: ClassificationResult) -> list[
     diffs = []
     if suggestion.title and suggestion.title != doc.title:
         diffs.append(("Titel", doc.title, suggestion.title))
-    if suggestion.correspondent_id and suggestion.correspondent_id != doc.correspondent:
+    if suggestion.correspondent_id and doc.correspondent and suggestion.correspondent_id != doc.correspondent:
         curr = state.taxonomy.correspondent_by_id(doc.correspondent)
         sugg = state.taxonomy.correspondent_by_id(suggestion.correspondent_id)
         diffs.append(("Absender", curr.name if curr else "–", sugg.name if sugg else suggestion.correspondent_name or f"ID {suggestion.correspondent_id}"))
-    if suggestion.document_type_id and suggestion.document_type_id != doc.document_type:
-        curr = state.taxonomy.document_type_by_id(doc.document_type) if doc.document_type else None
+    if suggestion.document_type_id and doc.document_type and suggestion.document_type_id != doc.document_type:
+        curr = state.taxonomy.document_type_by_id(doc.document_type)
         sugg = state.taxonomy.document_type_by_id(suggestion.document_type_id)
         diffs.append(("Dokumenttyp", curr.name if curr else "–", sugg.name if sugg else f"ID {suggestion.document_type_id}"))
-    if suggestion.storage_path_id and suggestion.storage_path_id != doc.storage_path:
-        curr = state.taxonomy.storage_path_by_id(doc.storage_path) if doc.storage_path else None
+    if suggestion.storage_path_id and doc.storage_path and suggestion.storage_path_id != doc.storage_path:
+        curr = state.taxonomy.storage_path_by_id(doc.storage_path)
         sugg = state.taxonomy.storage_path_by_id(suggestion.storage_path_id)
         diffs.append(("Speicherpfad", curr.name if curr else "–", sugg.name if sugg else f"ID {suggestion.storage_path_id}"))
     current_tags = set(doc.tags) - {state.taxonomy.inbox_tag_id}
