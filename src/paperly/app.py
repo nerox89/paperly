@@ -375,6 +375,11 @@ def _redirect_to_next(request: Request) -> RedirectResponse | JSONResponse:
 
     if ref == "audit":
         target = "/audit"
+    elif ref.startswith("audit:"):
+        # ref=audit:/audit?filter_query — return to exact filtered audit URL
+        target = ref[len("audit:"):]
+        if not target.startswith("/audit"):
+            target = "/audit"
     else:
         next_id = state.db.next_suggestion_doc_id()
         target = f"/document/{next_id}" if next_id else "/"

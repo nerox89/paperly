@@ -191,7 +191,7 @@
         <!-- Actions -->
         <div class="flex items-center gap-1.5 shrink-0" id="audit-actions-{{ doc.id }}">
           {% if ds.status == 'confirmed' %}
-            <a href="/document/{{ doc.id }}?ref=audit" class="btn-ghost text-xs px-2 py-1" title="Bearbeiten">✏️</a>
+            <a href="/document/{{ doc.id }}?ref=audit:/audit%3F{{ filter_query | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Bearbeiten">✏️</a>
             <button hx-post="/audit/{{ doc.id }}/create-template"
                     hx-target="#audit-result-{{ doc.id }}"
                     hx-swap="innerHTML"
@@ -206,7 +206,7 @@
                     class="btn-neon text-xs px-2 py-1" title="KI-Vorschlag übernehmen">
               ✨ Übernehmen
             </button>
-            <a href="/document/{{ doc.id }}?ref=audit" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
+            <a href="/document/{{ doc.id }}?ref=audit:/audit%3F{{ filter_query | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
             <button hx-post="/audit/{{ doc.id }}/confirm"
                     hx-target="#audit-actions-{{ doc.id }}"
                     hx-swap="innerHTML"
@@ -234,7 +234,7 @@
                     class="btn-neon text-xs px-2 py-1" title="KI-Vorschlag anfordern">
               🤖 Prüfen
             </button>
-            <a href="/document/{{ doc.id }}?ref=audit" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
+            <a href="/document/{{ doc.id }}?ref=audit:/audit%3F{{ filter_query | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
             <button hx-post="/audit/{{ doc.id }}/confirm"
                     hx-target="#audit-actions-{{ doc.id }}"
                     hx-swap="innerHTML"

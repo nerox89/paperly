@@ -174,7 +174,7 @@
       Überspringen
       <kbd>S</kbd>
     </button>
-    <a href="{% if ref == 'audit' %}/audit{% else %}/{% endif %}" class="btn-ghost text-sm flex items-center py-2.5 px-3" title="Zurück (Esc)">✕</a>
+    <a href="{% if ref.startswith('audit:') %}{{ ref[6:] }}{% elif ref == 'audit' %}/audit{% else %}/{% endif %}" class="btn-ghost text-sm flex items-center py-2.5 px-3" title="Zurück (Esc)">✕</a>
     <button type="button" id="delete-btn"
             hx-post="/document/{{ doc.id }}/delete{% if ref %}?ref={{ ref }}{% endif %}"
             hx-confirm="Dokument unwiderruflich löschen?"
@@ -223,7 +223,7 @@ document.addEventListener("keydown", function(e) {
   if (e.key === "s" && !inField) {
     document.getElementById("skip-btn")?.click();
   }
-  if (e.key === "Escape" && !inField) window.location.href = "/";
+  if (e.key === "Escape" && !inField) window.location.href = "{% if ref.startswith('audit:') %}{{ ref[6:] }}{% elif ref == 'audit' %}/audit{% else %}/{% endif %}";
 });
 </script>
 
