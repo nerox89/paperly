@@ -4,7 +4,7 @@
 {% set conf_color_class = "chip-green" if suggestion.confidence >= 0.8 else ("chip-amber" if suggestion.confidence >= 0.5 else "chip-rose") %}
 {% set ring_color = "#10b981" if suggestion.confidence >= 0.8 else ("#f59e0b" if suggestion.confidence >= 0.5 else "#f43f5e") %}
 
-<form method="post" action="/document/{{ doc.id }}/apply{% if ref %}?ref={{ ref }}{% endif %}" id="apply-form" class="flex flex-col gap-0">
+<form method="post" action="/document/{{ doc.id }}/apply{% if ref %}?ref={{ ref | urlencode }}{% endif %}" id="apply-form" class="flex flex-col gap-0">
 
   <!-- AI Header bar with confidence ring -->
   <div class="flex items-center gap-4 mb-5">
@@ -42,7 +42,7 @@
       {% set tag = taxonomy.tag_by_id(tid) %}
       {% if tag %}
         <span class="chip text-xs
-          {% if tid == taxonomy.inbox_tag_id %}chip-amber{% endif %}">
+          {% if tid in taxonomy.inbox_tag_ids %}chip-amber{% endif %}">
           {{ tag.name }}
         </span>
       {% endif %}
@@ -76,7 +76,7 @@
         <option value="">– keiner –</option>
         <option value="__new__">＋ Neu…</option>
         {% for c in taxonomy.correspondents | sort(attribute='name') %}
-        <option value="{{ c.id }}" {% if suggestion.correspondent_id == c.id %}selected{% endif %}>
+        <option value="{{ c.id }}" {% if suggestion.correspondent_id == c.id or (not suggestion.correspondent_id and not suggestion.correspondent_name and doc.correspondent == c.id) %}selected{% endif %}>
           {{ c.name }}
         </option>
         {% endfor %}
@@ -115,7 +115,7 @@
     <select name="storage_path_id" id="sp-select" class="input-dark">
       <option value="">– keiner –</option>
       {% for sp in taxonomy.storage_paths | sort(attribute='name') %}
-      <option value="{{ sp.id }}" {% if suggestion and suggestion.storage_path_id == sp.id %}selected{% elif not suggestion and doc.storage_path == sp.id %}selected{% endif %}>
+      <option value="{{ sp.id }}" {% if suggestion.storage_path_id == sp.id or (not suggestion.storage_path_id and doc.storage_path == sp.id) %}selected{% endif %}>
         {{ sp.name }}
       </option>
       {% endfor %}
@@ -127,7 +127,7 @@
     <label class="block text-xs font-mono font-semibold text-slate-500 uppercase tracking-wider mb-2">Tags</label>
     <div class="flex flex-wrap gap-2 mb-2">
       {% for tag in taxonomy.tags | sort(attribute='name') %}
-        {% if tag.id != taxonomy.inbox_tag_id %}
+        {% if tag.id not in taxonomy.inbox_tag_ids %}
         <label class="inline-flex items-center gap-1.5 cursor-pointer select-none group">
           <input type="checkbox" name="tag_ids" value="{{ tag.id }}"
                  {% if tag.id in suggestion.tag_ids %}checked
@@ -169,14 +169,16 @@
       <kbd>↵</kbd>
     </button>
     <button type="button" id="skip-btn"
-            hx-post="/document/{{ doc.id }}/skip{% if ref %}?ref={{ ref }}{% endif %}"
+            hx-post="/document/{{ doc.id }}/skip{% if ref %}?ref={{ ref | urlencode }}{% endif %}"
+            hx-disabled-elt="this"
             class="btn-ghost text-sm flex items-center gap-1.5 py-2.5">
       Überspringen
       <kbd>S</kbd>
     </button>
     <a href="{% if ref.startswith('audit:') %}{{ ref[6:] }}{% elif ref == 'audit' %}/audit{% else %}/{% endif %}" class="btn-ghost text-sm flex items-center py-2.5 px-3" title="Zurück (Esc)">✕</a>
     <button type="button" id="delete-btn"
-            hx-post="/document/{{ doc.id }}/delete{% if ref %}?ref={{ ref }}{% endif %}"
+            hx-post="/document/{{ doc.id }}/delete{% if ref %}?ref={{ ref | urlencode }}{% endif %}"
+            hx-disabled-elt="this"
             hx-confirm="Dokument unwiderruflich löschen?"
             class="btn-danger text-sm flex items-center py-2.5 px-3"
             aria-label="Dokument löschen" title="Löschen">
@@ -214,16 +216,4 @@ function toggleNew(sel, inputId) {
     corrNew.hidden = false;
   }
 })();
-document.addEventListener("keydown", function(e) {
-  const inField = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
-  if (e.key === "Enter" && !inField && e.target.tagName !== "BUTTON" && e.target.tagName !== "A") {
-    e.preventDefault();
-    document.getElementById("apply-form")?.requestSubmit();
-  }
-  if (e.key === "s" && !inField) {
-    document.getElementById("skip-btn")?.click();
-  }
-  if (e.key === "Escape" && !inField) window.location.href = "{% if ref.startswith('audit:') %}{{ ref[6:] }}{% elif ref == 'audit' %}/audit{% else %}/{% endif %}";
-});
 </script>
-

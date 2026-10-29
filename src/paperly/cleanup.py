@@ -143,15 +143,17 @@ async def _reassign_and_delete(
     field = "document_type" if action.kind == "document_type" else "correspondent"
     param = f"{field}__id" if action.kind == "correspondent" else "document_type__id"
 
-    r = await client._c.get(f"/api/documents/?{param}={action.remove_id}&page_size=500")
-    r.raise_for_status()
-    doc_ids = [d["id"] for d in r.json()["results"]]
+    documents = await client.get_all("/api/documents/", **{param: action.remove_id, "ordering": "id"})
+    doc_ids = [d["id"] for d in documents]
 
     if doc_ids:
         kwargs = {field: action.keep_id}
         await client.bulk_update_documents(doc_ids, **kwargs)  # type: ignore[arg-type]
 
-    # Delete the now-empty entity
+    remaining = await client.get_all("/api/documents/", **{param: action.remove_id})
+    if remaining:
+        raise RuntimeError(f"Cannot delete {action.remove_name}: documents still reference it")
+
     if action.kind == "document_type":
         await client.delete_document_type(action.remove_id)
     else:

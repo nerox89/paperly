@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Use Paperless's native inbox definition, including renamed or multiple inbox tags.
+- Show retryable classification failures instead of crashing or caching failed results.
+- Validate AI output and dates before they can become actionable suggestions.
+- Share suggestion application across review and audit, including new tags, correspondents, dates, and accurate history.
+- Respect explicit metadata clearing, preserve filtered audit navigation, and remove duplicate keyboard handlers.
+- Reserve batch jobs before fetching documents, count fetch failures, and clean up cancelled workers.
+- Keep conflicting suggestions out of audit batch confirmation and show page-level audit counts accurately.
+- Validate replacement settings before discarding the working connection; preserve review cache when changing models.
+- Paginate taxonomy and cleanup document queries before deleting merged entities.
+- Serve bundled styles and keep the interface visible when external animation services are unavailable.
+
+### Added
+- Isolated API, batch, metadata, learning, and browser regression checks in CI.
+
 ## [0.1.0] — 2026-04-05
 
 ### Added

@@ -7,9 +7,13 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from html import escape
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlencode
 
+import httpx
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -36,7 +40,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-BATCH_CONCURRENCY = int(os.environ.get("PAPERLY_BATCH_CONCURRENCY", "1"))
+BATCH_CONCURRENCY = max(1, int(os.environ.get("PAPERLY_BATCH_CONCURRENCY", "1")))
 AUTO_APPLY_MIN_CONFIDENCE = float(os.environ.get("PAPERLY_AUTO_APPLY_CONFIDENCE", "0.85"))
 
 # ---------------------------------------------------------------------------
@@ -70,29 +74,36 @@ class AppState:
         self.batch_current_doc = ""
         self.batch_log = []
         self.taxonomy_refreshed_at = 0.0
+        self.batch_task: asyncio.Task | None = None
+        self.taxonomy_lock = asyncio.Lock()
+        self.metadata_lock = asyncio.Lock()
+        self.suggestion_generation = 0
 
 
 state = AppState()
 
 
-def _build_provider(db: Database) -> BaseProvider:
+def _build_provider(db: Database, overrides: dict[str, str] | None = None) -> BaseProvider:
     """Build the active LLM provider from DB settings + env vars."""
-    provider_name = db.get_setting("ai_provider", os.environ.get("PAPERLY_AI_PROVIDER", "claude"))
+    def setting(key: str, default: str) -> str:
+        return (overrides or {}).get(key, db.get_setting(key, default))
+
+    provider_name = setting("ai_provider", os.environ.get("PAPERLY_AI_PROVIDER", "claude"))
 
     if provider_name == "ollama":
-        url = db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434"))
-        model = db.get_setting("ollama_model", os.environ.get("PAPERLY_OLLAMA_MODEL", "gemma4:e4b"))
+        url = setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434"))
+        model = setting("ollama_model", os.environ.get("PAPERLY_OLLAMA_MODEL", "gemma4:e4b"))
         logger.info("Using Ollama provider: %s model=%s", url, model)
         return OllamaProvider(base_url=url, model=model)
     elif provider_name == "openai":
-        api_key = db.get_setting("openai_api_key", os.environ.get("OPENAI_API_KEY", "dummy"))
-        base_url = db.get_setting("openai_base_url", os.environ.get("PAPERLY_OPENAI_BASE_URL", "http://copilot-gateway:8080/v1"))
-        model = db.get_setting("openai_model", os.environ.get("PAPERLY_OPENAI_MODEL", "gpt-4o-mini"))
+        api_key = setting("openai_api_key", os.environ.get("OPENAI_API_KEY", "dummy")) or "dummy"
+        base_url = setting("openai_base_url", os.environ.get("PAPERLY_OPENAI_BASE_URL", "http://copilot-gateway:8080/v1"))
+        model = setting("openai_model", os.environ.get("PAPERLY_OPENAI_MODEL", "gpt-4o-mini"))
         logger.info("Using OpenAI-compatible provider: %s model=%s", base_url, model)
         return OpenAIProvider(api_key=api_key, base_url=base_url, model=model)
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        model = db.get_setting("claude_model", os.environ.get("PAPERLY_CLAUDE_MODEL", "claude-haiku-4-5"))
+        model = setting("claude_model", os.environ.get("PAPERLY_CLAUDE_MODEL", "claude-haiku-4-5"))
         logger.info("Using Anthropic provider: model=%s", model)
         return AnthropicProvider(api_key=api_key, model=model)
 
@@ -131,15 +142,35 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Cached suggestions: %d", state.db.suggestion_count())
     logger.info("AI provider: %s / %s", state.classifier.provider.name, state.classifier.provider.model)
-    yield
-    state.db.close()
-    await state.paperless.close()
+    try:
+        yield
+    finally:
+        if state.batch_task and not state.batch_task.done():
+            state.batch_cancel = True
+            state.batch_task.cancel()
+            await asyncio.gather(state.batch_task, return_exceptions=True)
+        await state.paperless.close()
+        state.db.close()
 
 
 app = FastAPI(title="paperly", lifespan=lifespan)
 
 _static = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=_static), name="static")
+
+@app.exception_handler(httpx.HTTPError)
+async def paperless_error(request: Request, exc: httpx.HTTPError):
+    status = 404 if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404 else 502
+    logger.warning("Paperless request failed: %s", type(exc).__name__)
+    return templates.TemplateResponse(
+        request, "partials/error.html",
+        {"error": "Dokument in Paperless nicht gefunden." if status == 404 else
+                  "Paperless ist nicht erreichbar oder hat die Anfrage abgelehnt.",
+         "doc_id": request.path_params.get("doc_id") if request.url.path.endswith("/classify") else None,
+         "ref": request.query_params.get("ref", "")},
+        status_code=status,
+        headers={"X-Paperly-Error": "1"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -151,22 +182,33 @@ TAXONOMY_MAX_AGE = 300  # 5 minutes
 async def _ensure_fresh_taxonomy() -> None:
     """Refresh taxonomy from Paperless if older than TAXONOMY_MAX_AGE seconds."""
     if time.time() - state.taxonomy_refreshed_at > TAXONOMY_MAX_AGE:
-        await _refresh_taxonomy()
+        async with state.taxonomy_lock:
+            if time.time() - state.taxonomy_refreshed_at > TAXONOMY_MAX_AGE:
+                await _refresh_taxonomy()
 
 
 async def _refresh_taxonomy() -> None:
     """Force-refresh taxonomy from Paperless."""
-    state.taxonomy = await state.paperless.get_taxonomy()
+    taxonomy = await state.paperless.get_taxonomy()
+    previous = getattr(state, "taxonomy", None)
+    if previous and any(
+        {item.id for item in getattr(previous, field)} - {item.id for item in getattr(taxonomy, field)}
+        for field in ("tags", "correspondents", "document_types", "storage_paths")
+    ):
+        _invalidate_suggestions()
+    state.taxonomy = taxonomy
     state.taxonomy_refreshed_at = time.time()
+
+
+def _invalidate_suggestions() -> None:
+    state.suggestion_generation += 1
+    state.db.clear_all_suggestions()
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, page: int = 1):
     await _ensure_fresh_taxonomy()
-    if not state.taxonomy.inbox_tag_id:
-        raise HTTPException(500, "INBOX tag not found in Paperless")
-
     docs, total = await state.paperless.get_inbox_documents(
-        state.taxonomy.inbox_tag_id, page=page, page_size=25
+        page=page, page_size=25
     )
     stats = await state.paperless.get_statistics()
     total_docs = stats.get("documents_total", 0)
@@ -197,6 +239,9 @@ async def document_view(request: Request, doc_id: int, ref: str = ""):
     await _ensure_fresh_taxonomy()
     doc = await state.paperless.get_document(doc_id)
     suggestion = state.db.get_suggestion(doc_id)
+    if suggestion and not 0 < suggestion.confidence <= 1:
+        state.db.clear_suggestion(doc_id)
+        suggestion = None
     return templates.TemplateResponse(
             request,
             "document.html",
@@ -204,7 +249,10 @@ async def document_view(request: Request, doc_id: int, ref: str = ""):
             "doc": doc,
             "suggestion": suggestion,
             "taxonomy": state.taxonomy,
-            "paperless_url": state.db.get_setting("paperless_public_url") or state.db.get_setting("paperless_url") or os.environ.get("PAPERLESS_URL", ""),
+            "paperless_url": (state.db.get_setting("paperless_public_url")
+                              or os.environ.get("PAPERLY_PAPERLESS_PUBLIC_URL")
+                              or state.db.get_setting("paperless_url")
+                              or os.environ.get("PAPERLESS_URL", "")),
             "ref": ref,
         },
     )
@@ -213,35 +261,17 @@ async def document_view(request: Request, doc_id: int, ref: str = ""):
 @app.get("/document/{doc_id}/classify", response_class=HTMLResponse)
 async def classify_document(request: Request, doc_id: int):
     """Trigger AI classification and return the suggestion partial (HTMX target)."""
-    suggestion = state.db.get_suggestion(doc_id)
-
-    # Don't serve cached error results — reclassify instead
-    if suggestion is not None and suggestion.confidence <= 0.0:
-        state.db.clear_suggestion(doc_id)
-        suggestion = None
-
-    if suggestion is None:
-        doc = await state.paperless.get_document(doc_id)
-        try:
-            suggestion = await state.classifier.classify(
-                doc.content, state.taxonomy,
-                original_title=doc.title,
-                filename=doc.original_file_name or "",
-                db=state.db,
-            )
-        except Exception as e:
-            logger.error("Classification failed for doc %d: %s", doc_id, e)
-            return templates.TemplateResponse(
-            request,
-            "partials/error.html",
-            {"error": f"Klassifizierung fehlgeschlagen: {e}", "doc_id": doc_id},
-            )
-        # Only cache successful results (confidence > 0)
-        if suggestion.confidence > 0:
-            state.db.set_suggestion(doc_id, suggestion)
-
-    suggestion = state.db.get_suggestion(doc_id)
+    await _ensure_fresh_taxonomy()
+    generation = state.suggestion_generation
     doc = await state.paperless.get_document(doc_id)
+    try:
+        suggestion = await _get_or_classify(doc, generation=generation)
+    except Exception as e:
+        logger.error("Classification failed for doc %d: %s", doc_id, e)
+        return templates.TemplateResponse(
+            request, "partials/error.html",
+            {"error": str(e), "doc_id": doc_id, "ref": request.query_params.get("ref", "")},
+        )
     return templates.TemplateResponse(
             request,
             "partials/suggestion.html",
@@ -249,6 +279,7 @@ async def classify_document(request: Request, doc_id: int):
             "doc": doc,
             "suggestion": suggestion,
             "taxonomy": state.taxonomy,
+            "ref": request.query_params.get("ref", ""),
         },
     )
 
@@ -275,21 +306,13 @@ async def apply_document(
     new_tag_names: Annotated[list[str], Form()] = [],
 ):
     """Apply chosen metadata and remove INBOX tag."""
-    # Capture old values for audit log
+    await _ensure_fresh_taxonomy()
     doc = await state.paperless.get_document(doc_id)
-    old_values = {
-        "title": doc.title,
-        "created": doc.created,
-        "correspondent": doc.correspondent,
-        "document_type": doc.document_type,
-        "storage_path": doc.storage_path,
-        "tags": doc.tags,
-    }
 
     # Resolve correspondent
     corr_id: int | None = None
     if correspondent_id:
-        corr_id = int(correspondent_id)
+        corr_id = _optional_id(correspondent_id)
     elif correspondent_new.strip():
         new_corr = await state.paperless.create_correspondent(correspondent_new.strip())
         corr_id = new_corr.id
@@ -298,7 +321,7 @@ async def apply_document(
     # Resolve document type
     dt_id: int | None = None
     if document_type_id:
-        dt_id = int(document_type_id)
+        dt_id = _optional_id(document_type_id)
     elif document_type_new.strip():
         new_dt = await state.paperless.create_document_type(document_type_new.strip())
         dt_id = new_dt.id
@@ -307,10 +330,10 @@ async def apply_document(
     # Resolve storage path
     sp_id: int | None = None
     if storage_path_id:
-        sp_id = int(storage_path_id)
+        sp_id = _optional_id(storage_path_id)
 
     # Resolve tags — create new tags if provided
-    chosen_tags = [int(t) for t in tag_ids if t]
+    chosen_tags = [_optional_id(t) for t in tag_ids if t]
     if tag_new.strip():
         new_tag = await state.paperless.create_tag(tag_new.strip())
         chosen_tags.append(new_tag.id)
@@ -324,10 +347,9 @@ async def apply_document(
         await _refresh_taxonomy()
 
     # Remove INBOX tag
-    if state.taxonomy.inbox_tag_id in chosen_tags:
-        chosen_tags.remove(state.taxonomy.inbox_tag_id)
+    chosen_tags = list(dict.fromkeys(t for t in chosen_tags if t not in state.taxonomy.inbox_tag_ids))
 
-    await state.paperless.update_document(
+    updated = await state.paperless.update_document(
         doc_id,
         title=title,
         created=created or None,
@@ -337,36 +359,69 @@ async def apply_document(
         tags=chosen_tags,
     )
 
-    # Record feedback for self-learning (before clearing suggestion)
     suggestion = state.db.get_suggestion(doc_id)
+    _record_applied(doc, updated, suggestion)
+    return _redirect_to_next(request)
+
+
+def _optional_id(value: str) -> int:
+    try:
+        result = int(value)
+        if result > 0:
+            return result
+    except ValueError:
+        pass
+    raise HTTPException(422, "Invalid metadata ID")
+
+
+def _metadata(doc: Document) -> dict:
+    return {key: getattr(doc, key) for key in
+            ("title", "created", "correspondent", "document_type", "storage_path", "tags")}
+
+
+def _record_applied(
+    doc: Document, updated: Document, suggestion: ClassificationResult | None, action: str = "apply",
+) -> None:
     state.db.record_feedback(
-        doc_id, action="apply",
-        suggestion=suggestion,
-        final_title=title,
-        final_correspondent_id=corr_id,
-        final_document_type_id=dt_id,
-        final_storage_path_id=sp_id,
-        final_tag_ids=chosen_tags,
-        content_preview=doc.content[:500] if doc.content else "",
+        doc.id, action="apply", suggestion=suggestion,
+        final_title=updated.title, final_correspondent_id=updated.correspondent,
+        final_document_type_id=updated.document_type, final_storage_path_id=updated.storage_path,
+        final_tag_ids=updated.tags, content_preview=doc.content[:500],
     )
+    state.db.log_action(doc.id, action, old_values=_metadata(doc), new_values=_metadata(updated))
+    state.db.clear_suggestion(doc.id)
 
-    # Audit log
-    new_values = {
-        "title": title,
-        "created": created or None,
-        "correspondent": corr_id,
-        "document_type": dt_id,
-        "storage_path": sp_id,
-        "tags": chosen_tags,
-    }
-    state.db.log_action(doc_id, "apply", old_values=old_values, new_values=new_values)
-    state.db.clear_suggestion(doc_id)
 
-    # Redirect to next suggested document, or back to inbox
-    next_id = state.db.next_suggestion_doc_id()
-    if next_id:
-        return RedirectResponse(f"/document/{next_id}", status_code=303)
-    return RedirectResponse("/", status_code=303)
+async def _apply_suggestion(doc: Document, suggestion: ClassificationResult, action: str = "apply") -> None:
+    if not 0 < suggestion.confidence <= 1:
+        raise HTTPException(409, "No successful classification available")
+    await _ensure_fresh_taxonomy()
+    corr_id = suggestion.correspondent_id or doc.correspondent
+    tags = list(suggestion.tag_ids)
+    async with state.metadata_lock:
+        changed = False
+        if suggestion.correspondent_id is None and suggestion.correspondent_name:
+            corr = await state.paperless.create_correspondent(suggestion.correspondent_name.strip())
+            corr_id = corr.id
+            changed = True
+        for name in suggestion.new_tags:
+            tag = await state.paperless.create_tag(name.strip())
+            tags.append(tag.id)
+            changed = True
+        if changed:
+            await _refresh_taxonomy()
+    tags = list(dict.fromkeys(t for t in tags if t not in state.taxonomy.inbox_tag_ids))
+    resolved = replace(
+        suggestion, correspondent_id=corr_id, tag_ids=tags,
+        document_type_id=suggestion.document_type_id or doc.document_type,
+        storage_path_id=suggestion.storage_path_id or doc.storage_path,
+    )
+    updated = await state.paperless.update_document(
+        doc.id, title=resolved.title, created=resolved.created,
+        correspondent=resolved.correspondent_id, document_type=resolved.document_type_id,
+        storage_path=resolved.storage_path_id, tags=tags,
+    )
+    _record_applied(doc, updated, resolved, action)
 
 
 def _redirect_to_next(request: Request) -> RedirectResponse | JSONResponse:
@@ -392,14 +447,13 @@ def _redirect_to_next(request: Request) -> RedirectResponse | JSONResponse:
 @app.post("/document/{doc_id}/skip")
 async def skip_document(request: Request, doc_id: int):
     """Remove INBOX tag without changing metadata (mark as reviewed)."""
-    # Record feedback before clearing
+    await _ensure_fresh_taxonomy()
     suggestion = state.db.get_suggestion(doc_id)
+    doc = await state.paperless.get_document(doc_id)
+    new_tags = [t for t in doc.tags if t not in state.taxonomy.inbox_tag_ids]
+    await state.paperless.update_document(doc_id, tags=new_tags)
     if suggestion:
         state.db.record_feedback(doc_id, action="skip", suggestion=suggestion)
-    if state.taxonomy.inbox_tag_id:
-        doc = await state.paperless.get_document(doc_id)
-        new_tags = [t for t in doc.tags if t != state.taxonomy.inbox_tag_id]
-        await state.paperless.update_document(doc_id, tags=new_tags)
     state.db.log_action(doc_id, "skip")
     state.db.clear_suggestion(doc_id)
     return _redirect_to_next(request)
@@ -410,9 +464,9 @@ async def delete_document(request: Request, doc_id: int):
     """Permanently delete a document from Paperless."""
     # Record feedback before clearing
     suggestion = state.db.get_suggestion(doc_id)
+    await state.paperless.delete_document(doc_id)
     if suggestion:
         state.db.record_feedback(doc_id, action="delete", suggestion=suggestion)
-    await state.paperless.delete_document(doc_id)
     state.db.log_action(doc_id, "delete")
     state.db.clear_suggestion(doc_id)
     return _redirect_to_next(request)
@@ -422,6 +476,7 @@ async def delete_document(request: Request, doc_id: int):
 async def proxy_thumb(doc_id: int):
     """Proxy document thumbnail through paperly (avoids CORS issues)."""
     r = await state.paperless._c.get(f"/api/documents/{doc_id}/thumb/", timeout=10.0)
+    r.raise_for_status()
     return StreamingResponse(
         iter([r.content]),
         media_type=r.headers.get("content-type", "image/jpeg"),
@@ -432,9 +487,10 @@ async def proxy_thumb(doc_id: int):
 async def proxy_preview(doc_id: int):
     """Proxy document preview PDF through paperly."""
     r = await state.paperless._c.get(f"/api/documents/{doc_id}/preview/", timeout=30.0)
+    r.raise_for_status()
     return StreamingResponse(
         iter([r.content]),
-        media_type="application/pdf",
+        media_type=r.headers.get("content-type", "application/pdf"),
     )
 
 
@@ -459,22 +515,27 @@ async def refresh_taxonomy():
 # Batch classification
 # ---------------------------------------------------------------------------
 
-async def _classify_one(doc: Document) -> tuple[int, ClassificationResult | None]:
-    """Classify a single document, returning (doc_id, result_or_none)."""
-    if state.db.get_suggestion(doc.id) is not None:
-        return doc.id, state.db.get_suggestion(doc.id)
-    try:
-        result = await state.classifier.classify(
-            doc.content, state.taxonomy,
-            original_title=doc.title,
-            filename=doc.original_file_name or "",
-            db=state.db,
-        )
-        state.db.set_suggestion(doc.id, result)
-        return doc.id, result
-    except Exception as e:
-        logger.error("Batch classify failed for doc %d: %s", doc.id, e)
-        return doc.id, None
+async def _get_or_classify(
+    doc: Document, *, force: bool = False, generation: int | None = None,
+) -> ClassificationResult:
+    if generation is None:
+        generation = state.suggestion_generation
+    if generation != state.suggestion_generation:
+        raise ValueError("Settings or taxonomy changed. Please retry classification.")
+    cached = state.db.get_suggestion(doc.id)
+    if cached and 0 < cached.confidence <= 1 and not force:
+        return cached
+    state.db.clear_suggestion(doc.id)
+    result = await state.classifier.classify(
+        doc.content, state.taxonomy, original_title=doc.title,
+        filename=doc.original_file_name or "", db=state.db,
+    )
+    if not 0 < result.confidence <= 1:
+        raise ValueError(result.reasoning or "Classification failed")
+    if generation != state.suggestion_generation:
+        raise ValueError("Settings or taxonomy changed. Please retry classification.")
+    state.db.set_suggestion(doc.id, result)
+    return result
 
 
 async def _run_batch(doc_ids: list[int]) -> None:
@@ -483,69 +544,48 @@ async def _run_batch(doc_ids: list[int]) -> None:
     state.batch_total = len(doc_ids)
     state.batch_done = 0
     state.batch_errors = 0
-    state.batch_cancel = False
     state.batch_start_time = time.time()
     state.batch_current_doc = ""
     state.batch_log = []
 
-    sem = asyncio.Semaphore(BATCH_CONCURRENCY)
-    pending_tasks: set[asyncio.Task] = set()
+    queue = iter(doc_ids)
 
-    async def _worker(doc_id: int) -> None:
-        async with sem:
+    async def _worker() -> None:
+        for doc_id in queue:
             if state.batch_cancel:
                 return
-            doc = await state.paperless.get_document(doc_id)
-            state.batch_current_doc = doc.title or f"Doc #{doc_id}"
-            if state.batch_cancel:
-                return
-            _, result = await _classify_one(doc)
-
-            entry = {
-                "doc_id": doc_id,
-                "title": doc.title or f"Doc #{doc_id}",
+            title = f"Doc #{doc_id}"
+            result = None
+            try:
+                generation = state.suggestion_generation
+                doc = await state.paperless.get_document(doc_id)
+                title = doc.title or title
+                state.batch_current_doc = title
+                result = await _get_or_classify(doc, generation=generation)
+            except Exception as e:
+                logger.error("Batch classify failed for doc %d: %s", doc_id, e)
+                state.batch_errors += 1
+            state.batch_done += 1
+            state.batch_log.append({
+                "doc_id": doc_id, "title": title,
                 "status": "ok" if result else "error",
                 "confidence": round(result.confidence, 2) if result else None,
                 "provider": f"{result.provider_name}/{result.provider_model}" if result else "",
-            }
-            state.batch_log.append(entry)
-            if len(state.batch_log) > 30:
-                state.batch_log = state.batch_log[-30:]
+            })
+            state.batch_log = state.batch_log[-30:]
 
-            if result is None:
-                state.batch_errors += 1
-            state.batch_done += 1
-
-    for did in doc_ids:
-        if state.batch_cancel:
-            break
-        task = asyncio.create_task(_worker(did))
-        pending_tasks.add(task)
-        task.add_done_callback(pending_tasks.discard)
-
-        # Limit how many tasks are created ahead (concurrency + small buffer)
-        while len(pending_tasks) >= BATCH_CONCURRENCY + 1:
-            if state.batch_cancel:
-                break
-            await asyncio.sleep(0.2)
-
-    # Cancel any in-flight tasks on abort
-    if state.batch_cancel and pending_tasks:
-        for t in pending_tasks:
-            t.cancel()
-
-    # Wait for remaining in-flight tasks
-    if pending_tasks:
-        await asyncio.gather(*pending_tasks, return_exceptions=True)
-
-    state.batch_running = False
-    state.batch_current_doc = ""
-    cancelled = state.batch_cancel
-    logger.info(
-        "Batch %s: %d/%d done, %d errors",
-        "cancelled" if cancelled else "complete",
-        state.batch_done, state.batch_total, state.batch_errors,
-    )
+    workers = [asyncio.create_task(_worker()) for _ in range(min(BATCH_CONCURRENCY, len(doc_ids)))]
+    try:
+        await asyncio.gather(*workers)
+    finally:
+        for task in workers:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+        state.batch_running = False
+        state.batch_current_doc = ""
+        logger.info("Batch finished: %d/%d done, %d errors",
+                    state.batch_done, state.batch_total, state.batch_errors)
 
 
 @app.post("/batch/start")
@@ -554,29 +594,25 @@ async def batch_start(request: Request):
     if state.batch_running:
         return JSONResponse({"status": "already_running", "done": state.batch_done, "total": state.batch_total})
 
-    if not state.taxonomy.inbox_tag_id:
-        raise HTTPException(500, "INBOX tag not found")
-
-    # Fetch all inbox doc IDs (paginate through all pages)
-    all_doc_ids: list[int] = []
-    page = 1
-    while True:
-        docs, total = await state.paperless.get_inbox_documents(
-            state.taxonomy.inbox_tag_id, page=page, page_size=100
-        )
-        all_doc_ids.extend(d.id for d in docs)
-        if page * 100 >= total:
-            break
-        page += 1
-
-    # Filter out already-cached
-    uncached = [did for did in all_doc_ids if state.db.get_suggestion(did) is None]
-
-    if not uncached:
-        return JSONResponse({"status": "nothing_to_do", "cached": len(all_doc_ids)})
-
-    asyncio.create_task(_run_batch(uncached))
-    return JSONResponse({"status": "started", "total": len(uncached), "already_cached": len(all_doc_ids) - len(uncached)})
+    state.batch_running = True
+    state.batch_cancel = False
+    try:
+        await _ensure_fresh_taxonomy()
+        docs = await _all_inbox_documents()
+        uncached = []
+        for doc in docs:
+            cached = state.db.get_suggestion(doc.id)
+            if not cached or not 0 < cached.confidence <= 1:
+                uncached.append(doc.id)
+        if not uncached or state.batch_cancel:
+            state.batch_running = False
+            return JSONResponse({"status": "cancelled" if state.batch_cancel else "nothing_to_do",
+                                 "cached": len(docs) - len(uncached)})
+        state.batch_task = asyncio.create_task(_run_batch(uncached))
+        return JSONResponse({"status": "started", "total": len(uncached), "already_cached": len(docs) - len(uncached)})
+    except BaseException:
+        state.batch_running = False
+        raise
 
 
 @app.get("/batch/status")
@@ -606,6 +642,10 @@ async def batch_cancel():
     """Cancel a running batch classification."""
     if state.batch_running:
         state.batch_cancel = True
+        if state.batch_task and not state.batch_task.done():
+            state.batch_task.cancel()
+            await asyncio.gather(state.batch_task, return_exceptions=True)
+            state.batch_running = False
         return JSONResponse({"status": "cancelling"})
     return JSONResponse({"status": "not_running"})
 
@@ -640,29 +680,28 @@ async def batch_progress(request: Request):
 # Batch review
 # ---------------------------------------------------------------------------
 
-@app.get("/review", response_class=HTMLResponse)
-async def review_list(request: Request, min_conf: float = 0.0, max_conf: float = 1.0, sort: str = "confidence"):
-    """Show all cached suggestions for review."""
-    if not state.taxonomy.inbox_tag_id:
-        raise HTTPException(500, "INBOX tag not found")
-
-    # Get all inbox docs (paginate)
+async def _all_inbox_documents() -> list[Document]:
     all_docs: list[Document] = []
     page = 1
     while True:
-        docs, total = await state.paperless.get_inbox_documents(
-            state.taxonomy.inbox_tag_id, page=page, page_size=100
-        )
+        docs, total = await state.paperless.get_inbox_documents(page=page, page_size=100)
         all_docs.extend(docs)
-        if page * 100 >= total:
-            break
+        if not docs or len(all_docs) >= total:
+            return all_docs
         page += 1
+
+
+@app.get("/review", response_class=HTMLResponse)
+async def review_list(request: Request, min_conf: float = 0.0, max_conf: float = 1.0, sort: str = "confidence"):
+    """Show all cached suggestions for review."""
+    await _ensure_fresh_taxonomy()
+    all_docs = await _all_inbox_documents()
 
     # Match with cached suggestions
     items: list[dict] = []
     for doc in all_docs:
         suggestion = state.db.get_suggestion(doc.id)
-        if suggestion is None:
+        if suggestion is None or not 0 < suggestion.confidence <= 1:
             continue
         if suggestion.confidence < min_conf or suggestion.confidence > max_conf:
             continue
@@ -711,22 +750,10 @@ async def review_list(request: Request, min_conf: float = 0.0, max_conf: float =
 
 
 @app.post("/review/apply-all")
-async def review_apply_all(request: Request, min_confidence: Annotated[float, Form()] = 0.85):
+async def review_apply_all(request: Request, min_confidence: Annotated[float, Form(ge=0, le=1)] = 0.85):
     """Apply all suggestions above the confidence threshold."""
-    if not state.taxonomy.inbox_tag_id:
-        raise HTTPException(500, "INBOX tag not found")
-
-    # Get all inbox docs
-    all_docs: list[Document] = []
-    page = 1
-    while True:
-        docs, total = await state.paperless.get_inbox_documents(
-            state.taxonomy.inbox_tag_id, page=page, page_size=100
-        )
-        all_docs.extend(docs)
-        if page * 100 >= total:
-            break
-        page += 1
+    await _ensure_fresh_taxonomy()
+    all_docs = await _all_inbox_documents()
 
     applied = 0
     skipped = 0
@@ -734,45 +761,12 @@ async def review_apply_all(request: Request, min_confidence: Annotated[float, Fo
 
     for doc in all_docs:
         suggestion = state.db.get_suggestion(doc.id)
-        if suggestion is None or suggestion.confidence < min_confidence:
+        if suggestion is None or not 0 < suggestion.confidence <= 1 or suggestion.confidence < min_confidence:
             skipped += 1
             continue
 
         try:
-            # Build tag list without INBOX
-            tags = [tid for tid in suggestion.tag_ids if tid != state.taxonomy.inbox_tag_id]
-
-            await state.paperless.update_document(
-                doc.id,
-                title=suggestion.title,
-                created=suggestion.created,
-                correspondent=suggestion.correspondent_id,
-                document_type=suggestion.document_type_id,
-                storage_path=suggestion.storage_path_id,
-                tags=tags,
-            )
-            state.db.record_feedback(
-                doc.id, action="apply",
-                suggestion=suggestion,
-                final_title=suggestion.title,
-                final_correspondent_id=suggestion.correspondent_id,
-                final_document_type_id=suggestion.document_type_id,
-                final_storage_path_id=suggestion.storage_path_id,
-                final_tag_ids=tags,
-                content_preview=doc.content[:500] if doc.content else "",
-            )
-            state.db.log_action(
-                doc.id, "auto_apply",
-                old_values={"title": doc.title, "tags": doc.tags},
-                new_values={
-                    "title": suggestion.title,
-                    "correspondent": suggestion.correspondent_id,
-                    "document_type": suggestion.document_type_id,
-                    "tags": tags,
-                    "confidence": suggestion.confidence,
-                },
-            )
-            state.db.clear_suggestion(doc.id)
+            await _apply_suggestion(doc, suggestion, action="auto_apply")
             applied += 1
         except Exception as e:
             logger.error("Auto-apply failed for doc %d: %s", doc.id, e)
@@ -819,6 +813,8 @@ async def cleanup_execute(request: Request):
     merge_actions, delete_actions = _analyse(taxonomy)
 
     results: list[dict] = []
+    if merge_actions or delete_actions:
+        _invalidate_suggestions()
 
     for action in merge_actions:
         try:
@@ -852,7 +848,7 @@ async def cleanup_execute(request: Request):
 @app.post("/cache/clear")
 async def clear_cache(request: Request):
     """Clear all cached suggestions."""
-    state.db.clear_all_suggestions()
+    _invalidate_suggestions()
     referer = request.headers.get("referer", "/")
     return RedirectResponse(referer, status_code=303)
 
@@ -882,10 +878,8 @@ async def history_view(request: Request):
 # Settings
 # ---------------------------------------------------------------------------
 
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_view(request: Request):
-    """Settings page — AI provider configuration."""
-    current = {
+def _settings_values() -> dict[str, str]:
+    return {
         "ai_provider": state.db.get_setting("ai_provider", os.environ.get("PAPERLY_AI_PROVIDER", "claude")),
         "claude_model": state.db.get_setting("claude_model", os.environ.get("PAPERLY_CLAUDE_MODEL", "claude-haiku-4-5")),
         "ollama_url": state.db.get_setting("ollama_url", os.environ.get("PAPERLY_OLLAMA_URL", "http://localhost:11434")),
@@ -898,11 +892,16 @@ async def settings_view(request: Request):
         "paperless_token": state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", "")),
         "paperless_public_url": state.db.get_setting("paperless_public_url", os.environ.get("PAPERLY_PAPERLESS_PUBLIC_URL", "")),
     }
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_view(request: Request):
+    """Settings page — AI provider configuration."""
     return templates.TemplateResponse(
         request,
         "settings.html",
         {
-            "settings": current,
+            "settings": _settings_values(),
             "active_provider": state.classifier.provider.name,
             "active_model": state.classifier.provider.model,
         },
@@ -925,50 +924,59 @@ async def settings_save(
     paperless_public_url: Annotated[str, Form()] = "",
 ):
     """Save settings and switch provider."""
-    state.db.set_setting("ai_provider", ai_provider)
-    state.db.set_setting("claude_model", claude_model)
-    state.db.set_setting("ollama_url", ollama_url)
-    state.db.set_setting("ollama_model", ollama_model)
-    state.db.set_setting("openai_base_url", openai_base_url.strip())
-    state.db.set_setting("openai_model", openai_model.strip())
-    if openai_api_key.strip():
-        state.db.set_setting("openai_api_key", openai_api_key.strip())
-    state.db.set_setting("custom_prompt", custom_prompt.strip())
-
-    # Save Paperless connection (only if provided — don't overwrite with blank)
-    if paperless_url.strip():
-        state.db.set_setting("paperless_url", paperless_url.strip())
-    if paperless_token.strip():
-        state.db.set_setting("paperless_token", paperless_token.strip())
-    state.db.set_setting("paperless_public_url", paperless_public_url.strip())
-
-    # Reconnect Paperless if URL or token changed
-    stored_url = state.db.get_setting("paperless_url", os.environ.get("PAPERLESS_URL", ""))
-    stored_token = state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", ""))
-    if stored_url and stored_token:
-        await state.paperless.close()
-        state.paperless = PaperlessClient(stored_url, stored_token)
-        await state.paperless.open()
-        await _refresh_taxonomy()
-
-    # Rebuild provider at runtime
-    provider = _build_provider(state.db)
-    state.classifier.provider = provider
-    state.classifier.custom_prompt = custom_prompt.strip()
-
-    current = {
-        "ai_provider": ai_provider,
-        "claude_model": claude_model,
-        "ollama_url": ollama_url,
-        "ollama_model": ollama_model,
-        "openai_api_key": state.db.get_setting("openai_api_key", os.environ.get("OPENAI_API_KEY", "")),
-        "openai_base_url": openai_base_url.strip(),
-        "openai_model": openai_model.strip(),
-        "custom_prompt": custom_prompt.strip(),
-        "paperless_url": state.db.get_setting("paperless_url", os.environ.get("PAPERLESS_URL", "")),
-        "paperless_token": state.db.get_setting("paperless_token", os.environ.get("PAPERLESS_TOKEN", "")),
-        "paperless_public_url": paperless_public_url.strip(),
+    if state.batch_running:
+        raise HTTPException(409, "Wait for the running batch to finish before changing settings")
+    if ai_provider not in {"claude", "ollama", "openai"}:
+        raise HTTPException(422, "Unknown AI provider")
+    updates = {
+        "ai_provider": ai_provider, "claude_model": claude_model.strip(),
+        "ollama_url": ollama_url.strip(), "ollama_model": ollama_model.strip(),
+        "openai_base_url": openai_base_url.strip(), "openai_model": openai_model.strip(),
+        "custom_prompt": custom_prompt.strip(), "paperless_public_url": paperless_public_url.strip(),
     }
+    if openai_api_key.strip():
+        updates["openai_api_key"] = openai_api_key.strip()
+    if paperless_url.strip():
+        updates["paperless_url"] = paperless_url.strip()
+    if paperless_token.strip():
+        updates["paperless_token"] = paperless_token.strip()
+    previous = _settings_values()
+    current = {**previous, **updates}
+    candidate = None
+    try:
+        if not current["paperless_url"] or not current["paperless_token"]:
+            raise ValueError("Paperless URL and token are required")
+        if any(current[key] != previous[key] for key in ("paperless_url", "paperless_token")):
+            candidate = PaperlessClient(current["paperless_url"], current["paperless_token"])
+            await candidate.open()
+            taxonomy = await candidate.get_taxonomy()
+        provider = _build_provider(state.db, current)
+    except Exception:
+        if candidate:
+            await candidate.close()
+        return templates.TemplateResponse(
+            request, "settings.html",
+            {"settings": current, "active_provider": state.classifier.provider.name,
+             "active_model": state.classifier.provider.model,
+             "error": "Einstellungen nicht gespeichert. Bitte Verbindung und Zugangsdaten prüfen."},
+            status_code=400,
+        )
+    if state.batch_running:
+        if candidate:
+            await candidate.close()
+        raise HTTPException(409, "A batch started while settings were being validated")
+    state.db.set_settings(updates)
+    state.suggestion_generation += 1
+    previous_client = state.paperless
+    if candidate:
+        state.paperless = candidate
+        state.taxonomy = taxonomy
+        state.taxonomy_refreshed_at = time.time()
+    state.classifier = Classifier(provider, custom_prompt=current["custom_prompt"])
+    if any(current[key] != previous[key] for key in ("paperless_url", "paperless_token", "custom_prompt")):
+        state.db.clear_all_suggestions()
+    if candidate:
+        await previous_client.close()
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -1006,18 +1014,23 @@ async def list_openai_models(request: Request):
     try:
         body = await request.json()
         base_url = body.get("base_url", "").strip()
-        api_key = body.get("api_key", "dummy").strip() or "dummy"
+        api_key = body.get("api_key", "").strip()
     except Exception:
         base_url = ""
-        api_key = "dummy"
+        api_key = ""
     if not base_url:
         base_url = state.db.get_setting("openai_base_url", os.environ.get("PAPERLY_OPENAI_BASE_URL", "http://copilot-gateway:8080/v1"))
+    if not api_key:
+        api_key = state.db.get_setting("openai_api_key", os.environ.get("OPENAI_API_KEY", "dummy")) or "dummy"
     try:
         from openai import OpenAI
         import asyncio
         client = OpenAI(api_key=api_key, base_url=base_url)
         loop = asyncio.get_event_loop()
-        models = await loop.run_in_executor(None, lambda: client.models.list())
+        try:
+            models = await loop.run_in_executor(None, lambda: client.models.list())
+        finally:
+            client.close()
         ids = sorted(set(m.id for m in models.data))
         return JSONResponse({"ok": True, "models": ids})
     except Exception as e:
@@ -1031,6 +1044,8 @@ def _compute_doc_diffs(doc: Document, suggestion: ClassificationResult) -> list[
     diffs = []
     if suggestion.title and suggestion.title != doc.title:
         diffs.append(("Titel", doc.title, suggestion.title))
+    if suggestion.created and suggestion.created != doc.created[:10]:
+        diffs.append(("Datum", doc.created[:10], suggestion.created))
     if suggestion.correspondent_id and doc.correspondent and suggestion.correspondent_id != doc.correspondent:
         curr = state.taxonomy.correspondent_by_id(doc.correspondent)
         sugg = state.taxonomy.correspondent_by_id(suggestion.correspondent_id)
@@ -1043,8 +1058,12 @@ def _compute_doc_diffs(doc: Document, suggestion: ClassificationResult) -> list[
         curr = state.taxonomy.storage_path_by_id(doc.storage_path)
         sugg = state.taxonomy.storage_path_by_id(suggestion.storage_path_id)
         diffs.append(("Speicherpfad", curr.name if curr else "–", sugg.name if sugg else f"ID {suggestion.storage_path_id}"))
-    current_tags = set(doc.tags) - {state.taxonomy.inbox_tag_id}
-    suggested_tags = set(suggestion.tag_ids) - {state.taxonomy.inbox_tag_id}
+    if suggestion.correspondent_id is None and suggestion.correspondent_name and doc.correspondent:
+        curr = state.taxonomy.correspondent_by_id(doc.correspondent)
+        if not curr or curr.name.casefold() != suggestion.correspondent_name.strip().casefold():
+            diffs.append(("Absender", curr.name if curr else "–", suggestion.correspondent_name))
+    current_tags = set(doc.tags) - state.taxonomy.inbox_tag_ids
+    suggested_tags = set(suggestion.tag_ids) - state.taxonomy.inbox_tag_ids
     removed_tags = current_tags - suggested_tags  # tags on doc that AI wants to remove
     if removed_tags:  # only flag if AI removes existing tags, not when it just adds new ones
         curr_names = ", ".join(state.taxonomy.tag_by_id(t).name for t in sorted(current_tags) if state.taxonomy.tag_by_id(t)) or "–"
@@ -1069,13 +1088,13 @@ async def audit_view(
     await _ensure_fresh_taxonomy()
 
     # Parse optional int filters (HTML sends "" for unselected)
-    correspondent_id = int(correspondent) if correspondent else None
-    document_type_id = int(document_type) if document_type else None
-    storage_path_id = int(storage_path) if storage_path else None
-    tag_id = int(tag) if tag else None
+    correspondent_id = _optional_id(correspondent) if correspondent else None
+    document_type_id = _optional_id(document_type) if document_type else None
+    storage_path_id = _optional_id(storage_path) if storage_path else None
+    tag_id = _optional_id(tag) if tag else None
 
-    exclude_tag = state.taxonomy.inbox_tag_id if scope == "processed" else None
-    only_tag = state.taxonomy.inbox_tag_id if scope == "inbox" else tag_id
+    if scope not in {"processed", "inbox", "all"} or show not in {"all", "changes", "unchecked"}:
+        raise HTTPException(422, "Invalid audit filter")
 
     docs, total = await state.paperless.get_documents(
         page=page,
@@ -1083,8 +1102,8 @@ async def audit_view(
         correspondent_id=correspondent_id,
         document_type_id=document_type_id,
         storage_path_id=storage_path_id,
-        tag_id=only_tag,
-        exclude_tag_id=exclude_tag,
+        tag_id=tag_id,
+        in_inbox=None if scope == "all" else scope == "inbox",
         search=search or None,
     )
 
@@ -1097,6 +1116,8 @@ async def audit_view(
     doc_status: dict[int, dict] = {}
     for doc in docs:
         suggestion = state.db.get_suggestion(doc.id)
+        if suggestion and not 0 < suggestion.confidence <= 1:
+            suggestion = None
         if doc.id in confirmed_ids and not suggestion:
             doc_status[doc.id] = {"status": "confirmed", "diffs": [], "suggestion": None}
         elif suggestion:
@@ -1141,7 +1162,9 @@ async def audit_view(
             "doc_status": doc_status,
             "status_counts": status_counts,
             "filters": filters,
-            "filter_query": "&".join(f"{k}={v}" for k, v in filters.items() if v and v != "all" and v != "processed"),
+            "filter_query": urlencode({k: v for k, v in filters.items()
+                                       if k != "show" and v and (k != "scope" or v != "processed")}),
+            "audit_ref": f"audit:{request.url.path}?{request.url.query}",
         },
     )
 
@@ -1178,6 +1201,7 @@ async def audit_confirm(request: Request, doc_id: int):
         final_tag_ids=doc.tags,
         content_preview=doc.content[:500] if doc.content else "",
     )
+    state.db.clear_suggestion(doc_id)
 
     return HTMLResponse(
         '<span class="chip chip-green text-xs">✅ Bestätigt — als Trainingsbeispiel gespeichert</span>'
@@ -1187,19 +1211,15 @@ async def audit_confirm(request: Request, doc_id: int):
 @app.post("/audit/{doc_id}/classify")
 async def audit_classify(request: Request, doc_id: int):
     """Classify a document with AI and return diff view."""
+    await _ensure_fresh_taxonomy()
+    generation = state.suggestion_generation
     doc = await state.paperless.get_document(doc_id)
 
     try:
-        result = await state.classifier.classify(
-            doc.content, state.taxonomy,
-            original_title=doc.title,
-            filename=doc.original_file_name or "",
-            db=state.db,
-        )
-        state.db.set_suggestion(doc_id, result)
+        result = await _get_or_classify(doc, force=True, generation=generation)
     except Exception as e:
         return HTMLResponse(
-            f'<span class="chip chip-rose text-xs">❌ Fehler: {e}</span>'
+            f'<span class="chip chip-rose text-xs">❌ Fehler: {escape(str(e))}</span>'
         )
 
     diffs = _compute_doc_diffs(doc, result)
@@ -1224,30 +1244,7 @@ async def audit_apply_suggestion(request: Request, doc_id: int):
     if not suggestion:
         return HTMLResponse('<span class="chip chip-rose text-xs">❌ Kein Vorschlag vorhanden</span>')
 
-    # Remove inbox tag if present
-    tags = [t for t in suggestion.tag_ids if t != state.taxonomy.inbox_tag_id]
-
-    await state.paperless.update_document(
-        doc_id,
-        title=suggestion.title,
-        correspondent=suggestion.correspondent_id,
-        document_type=suggestion.document_type_id,
-        storage_path=suggestion.storage_path_id,
-        tags=tags,
-    )
-
-    state.db.record_feedback(
-        doc_id,
-        action="apply",
-        suggestion=suggestion,
-        final_title=suggestion.title,
-        final_correspondent_id=suggestion.correspondent_id,
-        final_document_type_id=suggestion.document_type_id,
-        final_storage_path_id=suggestion.storage_path_id,
-        final_tag_ids=tags,
-        content_preview=doc.content[:500] if doc.content else "",
-    )
-    state.db.clear_suggestion(doc_id)
+    await _apply_suggestion(doc, suggestion)
 
     return HTMLResponse(
         '<span class="chip chip-green text-xs">✅ KI-Vorschlag angewendet</span>'
@@ -1263,8 +1260,8 @@ async def audit_create_template(request: Request, doc_id: int):
     corr = state.taxonomy.correspondent_by_id(doc.correspondent) if doc.correspondent else None
     dt = state.taxonomy.document_type_by_id(doc.document_type) if doc.document_type else None
     sp = state.taxonomy.storage_path_by_id(doc.storage_path) if doc.storage_path else None
-    tag_names = [state.taxonomy.tag_by_id(t).name for t in doc.tags
-                 if state.taxonomy.tag_by_id(t) and state.taxonomy.tag_by_id(t).name != "INBOX"]
+    tags = [t for tid in doc.tags
+            if tid not in state.taxonomy.inbox_tag_ids and (t := state.taxonomy.tag_by_id(tid))]
 
     # Build prompt text
     parts = []
@@ -1275,8 +1272,8 @@ async def audit_create_template(request: Request, doc_id: int):
         parts.append(f'Dokumenttyp: "{dt.name}" (ID {dt.id})')
     if sp:
         parts.append(f'Speicherpfad: "{sp.name}" (ID {sp.id})')
-    if tag_names:
-        tag_parts = ", ".join(f'"{n}" (ID {t})' for n, t in zip(tag_names, [tid for tid in doc.tags if state.taxonomy.tag_by_id(tid) and state.taxonomy.tag_by_id(tid).name != "INBOX"]))
+    if tags:
+        tag_parts = ", ".join(f'"{t.name}" (ID {t.id})' for t in tags)
         parts.append(f"Tags: {tag_parts}")
 
     prompt_text = f'Für Dokumente von "{scope}" verwende immer:\n' + "\n".join(f"- {p}" for p in parts)
@@ -1297,89 +1294,55 @@ async def audit_create_template(request: Request, doc_id: int):
 async def audit_batch_classify(request: Request):
     """Classify a batch of document IDs and return summary."""
     form = await request.form()
-    doc_ids = [int(x) for x in form.get("doc_ids", "").split(",") if x.strip()]
+    doc_ids = list(dict.fromkeys(_optional_id(x) for x in form.get("doc_ids", "").split(",") if x.strip()))
     if not doc_ids:
         return JSONResponse({"classified": 0, "diffs": 0})
 
     classified = 0
     diffs = 0
+    errors = 0
+    await _ensure_fresh_taxonomy()
+    generation = state.suggestion_generation
     for doc_id in doc_ids:
         try:
             doc = await state.paperless.get_document(doc_id)
-            if state.db.get_suggestion(doc_id) is None:
-                result = await state.classifier.classify(
-                    doc.content, state.taxonomy,
-                    original_title=doc.title,
-                    filename=doc.original_file_name or "",
-                    db=state.db,
-                )
-                state.db.set_suggestion(doc_id, result)
-            else:
-                result = state.db.get_suggestion(doc_id)
+            result = await _get_or_classify(doc, generation=generation)
 
             classified += 1
-            # Check for differences
-            if result:
-                has_diff = (
-                    (result.title and result.title != doc.title)
-                    or (result.correspondent_id and result.correspondent_id != doc.correspondent)
-                    or (result.document_type_id and result.document_type_id != doc.document_type)
-                    or (result.storage_path_id and result.storage_path_id != doc.storage_path)
-                    or (set(result.tag_ids) != set(doc.tags))
-                )
-                if has_diff:
-                    diffs += 1
+            if _compute_doc_diffs(doc, result):
+                diffs += 1
         except Exception as e:
+            errors += 1
             logger.error("Audit batch classify failed for doc %d: %s", doc_id, e)
 
-    return JSONResponse({"classified": classified, "diffs": diffs})
+    return JSONResponse({"classified": classified, "diffs": diffs, "errors": errors})
 
 
 @app.post("/audit/batch-confirm")
 async def audit_batch_confirm(request: Request):
     """Confirm all docs on the page where AI agrees (no diffs). Feeds learning."""
     form = await request.form()
-    doc_ids = [int(x) for x in form.get("doc_ids", "").split(",") if x.strip()]
+    doc_ids = list(dict.fromkeys(_optional_id(x) for x in form.get("doc_ids", "").split(",") if x.strip()))
 
     confirmed = 0
+    errors = 0
+    await _ensure_fresh_taxonomy()
     for doc_id in doc_ids:
         try:
             doc = await state.paperless.get_document(doc_id)
             suggestion = state.db.get_suggestion(doc_id)
-            if not suggestion:
+            if not suggestion or not 0 < suggestion.confidence <= 1:
                 continue
             diffs = _compute_doc_diffs(doc, suggestion)
-            # For inbox docs (not yet reviewed), always apply — no conflict possible
-            is_inbox = state.taxonomy.inbox_tag_id in doc.tags
-            if diffs and not is_inbox:
+            if diffs:
                 continue  # skip docs with differences
-            tags = [t for t in suggestion.tag_ids if t != state.taxonomy.inbox_tag_id]
-            await state.paperless.update_document(
-                doc_id,
-                title=suggestion.title,
-                correspondent=suggestion.correspondent_id,
-                document_type=suggestion.document_type_id,
-                storage_path=suggestion.storage_path_id,
-                tags=tags,
-            )
-
-            state.db.record_feedback(
-                doc_id,
-                action="apply",
-                suggestion=suggestion,
-                final_title=suggestion.title,
-                final_correspondent_id=suggestion.correspondent_id,
-                final_document_type_id=suggestion.document_type_id,
-                final_storage_path_id=suggestion.storage_path_id,
-                final_tag_ids=tags,
-                content_preview=doc.content[:500] if doc.content else "",
-            )
-            state.db.clear_suggestion(doc_id)
+            await _apply_suggestion(doc, suggestion)
             confirmed += 1
         except Exception as e:
+            errors += 1
             logger.error("Audit batch confirm failed for doc %d: %s", doc_id, e)
 
-    return JSONResponse({"confirmed": confirmed})
+    return JSONResponse({"confirmed": confirmed, "errors": errors})
 
 
 # ---------------------------------------------------------------------------
@@ -1462,7 +1425,7 @@ async def add_rule(
     """Add a manual correction rule."""
     if description.strip() and prompt_text.strip():
         state.db.add_rule(rule_type, description.strip(), prompt_text.strip(), auto_generated=False)
-        state.db.clear_all_suggestions()
+        _invalidate_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
@@ -1470,7 +1433,7 @@ async def add_rule(
 async def toggle_rule(rule_id: int):
     """Toggle a correction rule on/off."""
     state.db.toggle_rule(rule_id)
-    state.db.clear_all_suggestions()
+    _invalidate_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
@@ -1478,7 +1441,7 @@ async def toggle_rule(rule_id: int):
 async def delete_rule(rule_id: int):
     """Delete a correction rule."""
     state.db.delete_rule(rule_id)
-    state.db.clear_all_suggestions()
+    _invalidate_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
@@ -1491,7 +1454,7 @@ async def edit_rule(
     """Edit description and prompt text of a correction rule."""
     if description.strip() and prompt_text.strip():
         state.db.update_rule(rule_id, description.strip(), prompt_text.strip())
-        state.db.clear_all_suggestions()
+        _invalidate_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 
@@ -1505,7 +1468,7 @@ async def accept_pattern(
     """Accept a detected pattern as a correction rule."""
     if source_pattern and prompt_text:
         state.db.add_rule("auto", description, prompt_text, source_pattern=source_pattern, auto_generated=True)
-        state.db.clear_all_suggestions()
+        _invalidate_suggestions()
     return RedirectResponse("/learning", status_code=303)
 
 

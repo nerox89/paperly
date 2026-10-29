@@ -22,8 +22,8 @@ Thank you for your interest in contributing!
 ## Guidelines
 
 - **Python style**: type hints on all functions, async everywhere, Pydantic for models
-- **Templates**: Jinja2 + HTMX — keep JS minimal, no build step
-- **Tests**: if you add a feature, add a test (or at least describe how to manually verify)
+- **Templates**: Jinja2 + HTMX — keep JS minimal; run `npm ci && npm run build:css` when changing utility classes
+- **Tests**: install `pip install -e '.[test]'`, run `python -m playwright install --with-deps chromium`, then `python -m unittest discover -s tests -v`; use synthetic data, never real documents or credentials
 - **Commits**: use [Conventional Commits](https://www.conventionalcommits.org/):
   `feat:`, `fix:`, `docs:`, `chore:`
 

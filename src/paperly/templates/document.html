@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set return_url = ref[6:] if ref.startswith('audit:') else ('/audit' if ref == 'audit' else '/') %}
 
 {% block title %}{{ doc.title }} — paperly{% endblock %}
 {% block container_class %}{% endblock %}
@@ -38,11 +39,11 @@
     <!-- Back link + header -->
     <div class="px-6 pt-5 pb-4 shrink-0" style="border-bottom: 1px solid rgba(255,255,255,0.06);">
       <!-- Back -->
-      <a href="/" class="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-cyan-400 transition-colors mb-3 group">
+      <a href="{{ return_url }}" class="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-cyan-400 transition-colors mb-3 group">
         <svg class="w-4 h-4 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
         </svg>
-        <span>Inbox</span>
+        <span>{{ 'Audit' if ref.startswith('audit') else 'Inbox' }}</span>
         <kbd>Esc</kbd>
       </a>
 
@@ -65,7 +66,7 @@
       {% if suggestion %}
         {% include "partials/suggestion.html" %}
       {% else %}
-      <div hx-get="/document/{{ doc.id }}/classify"
+      <div hx-get="/document/{{ doc.id }}/classify{% if ref %}?ref={{ ref | urlencode }}{% endif %}"
            hx-trigger="load"
            hx-target="#suggestion-area"
            hx-swap="innerHTML"
@@ -113,15 +114,20 @@
 {% block scripts %}
 <script>
 document.addEventListener("keydown", function(e) {
+  if (e.defaultPrevented || e.repeat) return;
   const inField = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
   if (e.key === "Escape") {
     e.preventDefault();
-    window.location.href = "/";
+    window.location.href = {{ return_url | tojson }};
     return;
   }
   if (!inField && e.key === "s") {
     e.preventDefault();
     document.getElementById("skip-btn")?.click();
+  }
+  if (!inField && e.key === "Enter" && e.target.tagName !== "BUTTON" && e.target.tagName !== "A") {
+    e.preventDefault();
+    document.getElementById("apply-form")?.requestSubmit();
   }
 });
 </script>

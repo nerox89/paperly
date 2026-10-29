@@ -30,7 +30,7 @@
     <div class="glass-sm rounded-lg p-3 text-center {% if filters.show == 'all' %}border-cyan-500/30{% endif %}">
       <a href="/audit?{{ filter_query }}&show=all" class="block">
         <div class="text-lg font-bold font-mono text-slate-300">{{ status_counts.unchecked + status_counts.agree + status_counts.differs + status_counts.confirmed }}</div>
-        <div class="text-xs text-slate-500">Gesamt</div>
+        <div class="text-xs text-slate-500">Auf dieser Seite</div>
       </a>
     </div>
     <div class="glass-sm rounded-lg p-3 text-center">
@@ -169,7 +169,7 @@
             {% endif %}
             {% for tid in doc.tags %}
               {% set t = taxonomy.tag_by_id(tid) %}
-              {% if t and t.name != 'INBOX' %}<span class="chip chip-cyan">{{ t.name }}</span>{% endif %}
+              {% if t and t.id not in taxonomy.inbox_tag_ids %}<span class="chip chip-cyan">{{ t.name }}</span>{% endif %}
             {% endfor %}
           </div>
 
@@ -191,7 +191,7 @@
         <!-- Actions -->
         <div class="flex items-center gap-1.5 shrink-0" id="audit-actions-{{ doc.id }}">
           {% if ds.status == 'confirmed' %}
-            <a href="/document/{{ doc.id }}?ref=audit:/audit%3F{{ filter_query | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Bearbeiten">✏️</a>
+            <a href="/document/{{ doc.id }}?ref={{ audit_ref | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Bearbeiten">✏️</a>
             <button hx-post="/audit/{{ doc.id }}/create-template"
                     hx-target="#audit-result-{{ doc.id }}"
                     hx-swap="innerHTML"
@@ -206,7 +206,7 @@
                     class="btn-neon text-xs px-2 py-1" title="KI-Vorschlag übernehmen">
               ✨ Übernehmen
             </button>
-            <a href="/document/{{ doc.id }}?ref=audit:/audit%3F{{ filter_query | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
+            <a href="/document/{{ doc.id }}?ref={{ audit_ref | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
             <button hx-post="/audit/{{ doc.id }}/confirm"
                     hx-target="#audit-actions-{{ doc.id }}"
                     hx-swap="innerHTML"
@@ -234,7 +234,7 @@
                     class="btn-neon text-xs px-2 py-1" title="KI-Vorschlag anfordern">
               🤖 Prüfen
             </button>
-            <a href="/document/{{ doc.id }}?ref=audit:/audit%3F{{ filter_query | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
+            <a href="/document/{{ doc.id }}?ref={{ audit_ref | urlencode }}" class="btn-ghost text-xs px-2 py-1" title="Manuell bearbeiten">✏️</a>
             <button hx-post="/audit/{{ doc.id }}/confirm"
                     hx-target="#audit-actions-{{ doc.id }}"
                     hx-swap="innerHTML"
@@ -252,21 +252,6 @@
     {% endfor %}
   </div>
 
-  <!-- Pagination -->
-  {% set total_pages = (total + page_size - 1) // page_size %}
-  {% if total_pages > 1 %}
-  {% set base_url = "/audit?" ~ filter_query %}
-  <div class="flex items-center justify-center gap-2 mt-6">
-    {% if page > 1 %}
-    <a href="{{ base_url }}&page={{ page - 1 }}" class="btn-ghost text-xs px-3 py-1.5">← Zurück</a>
-    {% endif %}
-    <span class="text-xs font-mono text-slate-500">Seite {{ page }} / {{ total_pages }}</span>
-    {% if page < total_pages %}
-    <a href="{{ base_url }}&page={{ page + 1 }}" class="btn-ghost text-xs px-3 py-1.5">Weiter →</a>
-    {% endif %}
-  </div>
-  {% endif %}
-
   {% else %}
   <div class="glass rounded-xl p-12 text-center">
     <div class="text-5xl mb-4">📄</div>
@@ -279,6 +264,20 @@
         Passe die Filter an oder wechsle den Bereich.
       {% endif %}
     </p>
+  </div>
+  {% endif %}
+
+  {% set total_pages = (total + page_size - 1) // page_size %}
+  {% if total_pages > 1 %}
+  {% set base_url = "/audit?" ~ filter_query ~ "&show=" ~ filters.show %}
+  <div class="flex items-center justify-center gap-2 mt-6">
+    {% if page > 1 %}
+    <a href="{{ base_url }}&page={{ page - 1 }}" class="btn-ghost text-xs px-3 py-1.5">← Zurück</a>
+    {% endif %}
+    <span class="text-xs font-mono text-slate-500">Seite {{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="{{ base_url }}&page={{ page + 1 }}" class="btn-ghost text-xs px-3 py-1.5">Weiter →</a>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -308,8 +307,9 @@ async function batchClassify() {
     const fd = new FormData();
     fd.append('doc_ids', ids.join(','));
     const resp = await fetch('/audit/batch-classify', { method: 'POST', body: fd });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    status.textContent = `✅ ${data.classified} geprüft, ${data.diffs} mit Änderungen`;
+    status.textContent = `✅ ${data.classified} geprüft, ${data.diffs} mit Änderungen, ${data.errors || 0} Fehler`;
     setTimeout(() => window.location.reload(), 1200);
   } catch (e) {
     status.textContent = `❌ Fehler: ${e.message}`;
@@ -331,6 +331,7 @@ async function batchConfirm() {
     const fd = new FormData();
     fd.append('doc_ids', ids.join(','));
     const resp = await fetch('/audit/batch-confirm', { method: 'POST', body: fd });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     if (data.confirmed > 0) {
       btn.textContent = `✅ ${data.confirmed} bestätigt`;

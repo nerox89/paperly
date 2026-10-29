@@ -6,9 +6,11 @@ import abc
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import date
 
 import httpx
 
@@ -400,6 +402,7 @@ class Classifier:
 
         try:
             data = await self._provider.generate(system, user_message)
+            _validate_schema(data)
         except Exception as e:
             logger.error("Classification failed (%s/%s): %s", self._provider.name, self._provider.model, e)
             return _fallback_result(original_title, f"Fehler ({self._provider.name}): {e}")
@@ -421,7 +424,7 @@ class Classifier:
             tag_ids=data.get("tag_ids") or [],
             document_type_id=data.get("document_type_id"),
             confidence=float(data.get("confidence", 0.5)),
-            reasoning=data.get("reasoning", ""),
+            reasoning=data.get("reasoning") or "",
             raw_content_preview=truncated[:500],
             new_tags=data.get("new_tags") or [],
             storage_path_id=data.get("storage_path_id"),
@@ -440,15 +443,34 @@ class Classifier:
 
 def _validate_schema(data: dict) -> None:
     """Ensure the LLM response has the expected classification schema keys."""
+    if not isinstance(data, dict):
+        raise ValueError("Classification response must be an object")
     required = {"title", "confidence"}
     missing = required - set(data.keys())
     if missing:
         raise ValueError(f"Response missing required keys: {missing}. Got keys: {list(data.keys())}")
+    if not isinstance(data["title"], str) or not data["title"].strip():
+        raise ValueError("Classification title must be a non-empty string")
     # Coerce confidence to float (Gemma sometimes returns it as string)
     try:
         data["confidence"] = float(data["confidence"])
     except (TypeError, ValueError):
         raise ValueError(f"confidence not numeric, got: {data.get('confidence')!r}")
+    if not math.isfinite(data["confidence"]) or not 0 <= data["confidence"] <= 1:
+        raise ValueError("Classification confidence must be between 0 and 1")
+    for key in ("correspondent_id", "document_type_id", "storage_path_id"):
+        value = data.get(key)
+        if value is not None and (type(value) is not int or value <= 0):
+            raise ValueError(f"{key} must be a positive integer or null")
+    tags = data.get("tag_ids") or []
+    if not isinstance(tags, list) or any(type(t) is not int or t <= 0 for t in tags):
+        raise ValueError("tag_ids must be a list of positive integers")
+    new_tags = data.get("new_tags") or []
+    if not isinstance(new_tags, list) or any(not isinstance(t, str) or not t.strip() for t in new_tags):
+        raise ValueError("new_tags must be a list of non-empty strings")
+    for key in ("correspondent_name", "reasoning"):
+        if data.get(key) is not None and not isinstance(data[key], str):
+            raise ValueError(f"{key} must be a string")
 
 
 def _salvage_wrong_schema(data: dict) -> dict | None:
@@ -555,7 +577,7 @@ def _build_user_message(
     tag_list = "\n".join(
         f"  {t.id}: {t.name}"
         for t in sorted(taxonomy.tags, key=lambda x: x.name)
-        if t.id != taxonomy.inbox_tag_id
+        if t.id not in taxonomy.inbox_tag_ids
     )
     dt_list = "\n".join(
         f"  {dt.id}: {dt.name}"
@@ -648,6 +670,16 @@ _GERMAN_MONTHS = {
 
 
 def _normalise_date(raw: str | None) -> str | None:
+    value = _parse_date(raw)
+    if value:
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_date(raw: str | None) -> str | None:
     """Normalise date to YYYY-MM-DD. Handles various German date formats."""
     if not raw or not isinstance(raw, str):
         return None
@@ -736,7 +768,7 @@ def _validate_ids(result: ClassificationResult, taxonomy: Taxonomy) -> Classific
             )
             result.document_type_id = None
 
-    valid_tag_ids = {t.id for t in taxonomy.tags}
+    valid_tag_ids = {t.id for t in taxonomy.tags} - taxonomy.inbox_tag_ids
     invalid_tags = [tid for tid in result.tag_ids if tid not in valid_tag_ids]
     if invalid_tags:
         logger.warning("LLM returned unknown tag_ids=%s, removing", invalid_tags)

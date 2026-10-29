@@ -82,7 +82,9 @@
 
 <!-- Batch progress area -->
 <div id="batch-area" class="mb-6">
+  {% with total=batch_total, done=batch_done, errors=batch_errors %}
   {% include "partials/batch_progress.html" %}
+  {% endwith %}
 </div>
 
 <!-- Document grid -->

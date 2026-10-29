@@ -181,7 +181,7 @@ class Database:
         assert self._conn
         rows = self._conn.execute(
             "SELECT id, doc_id, action, old_values_json, new_values_json, created_at "
-            "FROM history ORDER BY created_at DESC LIMIT ?",
+            "FROM history ORDER BY created_at DESC, id DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [
@@ -214,6 +214,13 @@ class Database:
             (key, value),
         )
         self._conn.commit()
+
+    def set_settings(self, values: dict[str, str]) -> None:
+        assert self._conn
+        with self._conn:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", values.items(),
+            )
 
     def get_all_settings(self) -> dict[str, str]:
         assert self._conn

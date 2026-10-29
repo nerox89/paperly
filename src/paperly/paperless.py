@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 from dataclasses import dataclass, field
+from types import EllipsisType
 
 
 @dataclass
@@ -11,6 +12,7 @@ class Tag:
     id: int
     name: str
     document_count: int = 0
+    is_inbox_tag: bool = False
 
 
 @dataclass
@@ -55,6 +57,10 @@ class Taxonomy:
     document_types: list[DocumentType] = field(default_factory=list)
     storage_paths: list[StoragePath] = field(default_factory=list)
     inbox_tag_id: int | None = None
+
+    @property
+    def inbox_tag_ids(self) -> set[int]:
+        return {t.id for t in self.tags if t.is_inbox_tag}
 
     def tag_by_id(self, id: int) -> Tag | None:
         return next((t for t in self.tags if t.id == id), None)
@@ -102,32 +108,33 @@ class PaperlessClient:
         return r.json()
 
     async def get_taxonomy(self) -> Taxonomy:
-        tags_r, corr_r, dt_r, sp_r = await _gather(
-            self._c.get("/api/tags/?page_size=500"),
-            self._c.get("/api/correspondents/?page_size=500"),
-            self._c.get("/api/document_types/?page_size=500"),
-            self._c.get("/api/storage_paths/?page_size=500"),
+        tag_data, corr_data, dt_data, sp_data = await _gather(
+            self.get_all("/api/tags/"),
+            self.get_all("/api/correspondents/"),
+            self.get_all("/api/document_types/"),
+            self.get_all("/api/storage_paths/"),
         )
 
         tags = [
-            Tag(id=t["id"], name=t["name"], document_count=t.get("document_count", 0))
-            for t in tags_r.json()["results"]
+            Tag(id=t["id"], name=t["name"], document_count=t.get("document_count", 0),
+                is_inbox_tag=t.get("is_inbox_tag", False))
+            for t in tag_data
         ]
         correspondents = [
             Correspondent(id=c["id"], name=c["name"], document_count=c.get("document_count", 0))
-            for c in corr_r.json()["results"]
+            for c in corr_data
         ]
         document_types = [
             DocumentType(id=dt["id"], name=dt["name"], document_count=dt.get("document_count", 0))
-            for dt in dt_r.json()["results"]
+            for dt in dt_data
         ]
         storage_paths = [
             StoragePath(id=sp["id"], name=sp["name"], document_count=sp.get("document_count", 0))
-            for sp in sp_r.json()["results"]
+            for sp in sp_data
         ]
 
         inbox_tag = next(
-            (t for t in tags if t.name.upper() == "INBOX"),
+            (t for t in tags if t.is_inbox_tag),
             None,
         )
 
@@ -139,9 +146,21 @@ class PaperlessClient:
             inbox_tag_id=inbox_tag.id if inbox_tag else None,
         )
 
+    async def get_all(self, path: str, **params: str | int) -> list[dict]:
+        """Read every page before callers mutate the collection."""
+        results: list[dict] = []
+        url: str | None = path
+        while url:
+            response = await self._c.get(url, params={"page_size": 500, **params} if not results else None)
+            response.raise_for_status()
+            data = response.json()
+            results.extend(data["results"])
+            url = data.get("next")
+        return results
+
     async def get_inbox_documents(
         self,
-        inbox_tag_id: int,
+        *,
         page: int = 1,
         page_size: int = 25,
     ) -> tuple[list[Document], int]:
@@ -149,10 +168,10 @@ class PaperlessClient:
         r = await self._c.get(
             "/api/documents/",
             params={
-                "tags__id__all": inbox_tag_id,
+                "is_in_inbox": "true",
                 "page": page,
                 "page_size": page_size,
-                "ordering": "created",
+                "ordering": "created,id",
             },
         )
         r.raise_for_status()
@@ -170,6 +189,7 @@ class PaperlessClient:
         storage_path_id: int | None = None,
         tag_id: int | None = None,
         exclude_tag_id: int | None = None,
+        in_inbox: bool | None = None,
         search: str | None = None,
     ) -> tuple[list[Document], int]:
         """Generic document query with flexible filters."""
@@ -188,6 +208,8 @@ class PaperlessClient:
             params["tags__id__all"] = tag_id
         if exclude_tag_id:
             params["tags__id__none"] = exclude_tag_id
+        if in_inbox is not None:
+            params["is_in_inbox"] = str(in_inbox).lower()
         if search:
             params["query"] = search
         r = await self._c.get("/api/documents/", params=params)
@@ -210,9 +232,9 @@ class PaperlessClient:
         *,
         title: str | None = None,
         created: str | None = None,
-        correspondent: int | None = None,
-        document_type: int | None = None,
-        storage_path: int | None = None,
+        correspondent: int | None | EllipsisType = ...,
+        document_type: int | None | EllipsisType = ...,
+        storage_path: int | None | EllipsisType = ...,
         tags: list[int] | None = None,
         remove_tag: int | None = None,
     ) -> Document:
@@ -222,11 +244,11 @@ class PaperlessClient:
             payload["title"] = title
         if created is not None:
             payload["created"] = created
-        if correspondent is not None:
+        if correspondent is not ...:
             payload["correspondent"] = correspondent
-        if document_type is not None:
+        if document_type is not ...:
             payload["document_type"] = document_type
-        if storage_path is not None:
+        if storage_path is not ...:
             payload["storage_path"] = storage_path
         if tags is not None:
             payload["tags"] = tags
