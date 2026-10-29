@@ -185,10 +185,11 @@ class RegressionTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def asyncTearDown(self):
-        task = getattr(self.state, "batch_task", None)
-        if task and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        for name in ("batch_task", "review_apply_task"):
+            task = getattr(self.state, name, None)
+            if task and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         await self.client.aclose()
         if self.state.paperless is not self.paperless:
             await self.state.paperless.close()
@@ -202,6 +203,11 @@ class RegressionTests(unittest.IsolatedAsyncioTestCase):
             setattr(result, key, value)
         self.db.set_suggestion(doc_id, result)
         return result
+
+    async def finish_bulk_apply(self):
+        task = getattr(self.state, "review_apply_task", None)
+        if task:
+            await task
 
     async def test_native_inbox_includes_all_flagged_tags_not_name_matches(self):
         self.backend.collections["tags"] = [
@@ -336,6 +342,7 @@ class RegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_bulk_apply_resolves_new_metadata_and_records_actual_values(self):
         await self.cache_suggestion()
         response = await self.client.post("/review/apply-all", data={"min_confidence": "0.85"})
+        await self.finish_bulk_apply()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.backend.docs[1]["correspondent"], 11)
         self.assertEqual(self.backend.docs[1]["tags"], [2, 3])
@@ -344,6 +351,133 @@ class RegressionTests(unittest.IsolatedAsyncioTestCase):
         feedback = self.db.get_recent_feedback()[0]
         self.assertFalse(feedback["correspondent_changed"])
         self.assertFalse(feedback["tags_changed"])
+
+    async def test_bulk_apply_returns_before_document_fetch_finishes(self):
+        await self.cache_suggestion()
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = self.paperless.get_inbox_documents
+
+        async def blocked(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        with patch.object(self.paperless, "get_inbox_documents", side_effect=blocked):
+            request = asyncio.create_task(self.client.post("/review/apply-all"))
+            await entered.wait()
+            try:
+                await asyncio.sleep(0.01)
+                self.assertTrue(request.done(), "Bulk POST must not wait for Paperless")
+            finally:
+                release.set()
+                await request
+                await self.finish_bulk_apply()
+
+    async def test_repeated_bulk_clicks_do_not_apply_same_document_twice(self):
+        await self.cache_suggestion()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def blocked(request):
+            if request.method == "PATCH":
+                entered.set()
+                await release.wait()
+            return self.backend(request)
+
+        await self.paperless.close()
+        self.paperless._http = httpx.AsyncClient(
+            base_url="http://paperless.test", transport=httpx.MockTransport(blocked),
+        )
+        first = asyncio.create_task(self.client.post("/review/apply-all"))
+        await entered.wait()
+        second = asyncio.create_task(self.client.post("/review/apply-all"))
+        await asyncio.sleep(0.01)
+        release.set()
+        await asyncio.gather(first, second)
+        await self.finish_bulk_apply()
+        self.assertEqual(len(self.db.get_history()), 1)
+        self.assertNotIn(1, self.backend.docs[1]["tags"])
+
+    async def test_bulk_timeout_stops_without_replaying_or_discarding_suggestions(self):
+        self.backend.docs[2] = {**self.backend.docs[1], "id": 2}
+        await self.cache_suggestion(1)
+        await self.cache_suggestion(2)
+
+        def timeout(request):
+            if request.method == "PATCH" and request.url.path == "/api/documents/1/":
+                raise httpx.ReadTimeout("", request=request)
+            return self.backend(request)
+
+        await self.paperless.close()
+        self.paperless._http = httpx.AsyncClient(
+            base_url="http://paperless.test", transport=httpx.MockTransport(timeout),
+        )
+        await self.client.post("/review/apply-all")
+        await self.finish_bulk_apply()
+        self.assertIsNotNone(self.db.get_suggestion(1))
+        self.assertIsNotNone(self.db.get_suggestion(2))
+        self.assertIn(1, self.backend.docs[2]["tags"])
+        self.assertEqual(self.db.get_history(), [])
+        progress = await self.client.get("/review/apply-progress")
+        self.assertIn("ReadTimeout", progress.text)
+
+    async def test_paperless_document_writes_do_not_overlap(self):
+        self.backend.docs[2] = {**self.backend.docs[1], "id": 2}
+        active = peak = 0
+
+        async def slow(request):
+            nonlocal active, peak
+            if request.method != "PATCH":
+                return self.backend(request)
+            active += 1
+            peak = max(active, peak)
+            try:
+                await asyncio.sleep(0.01)
+                return self.backend(request)
+            finally:
+                active -= 1
+
+        await self.paperless.close()
+        self.paperless._http = httpx.AsyncClient(
+            base_url="http://paperless.test", transport=httpx.MockTransport(slow),
+        )
+        await asyncio.gather(
+            self.paperless.update_document(1, title="First"),
+            self.paperless.update_document(2, title="Second"),
+        )
+        self.assertEqual(peak, 1)
+        self.assertEqual(self.backend.docs[1]["title"], "First")
+        self.assertEqual(self.backend.docs[2]["title"], "Second")
+
+    async def test_settings_cannot_replace_connection_during_bulk_apply(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = self.paperless.get_inbox_documents
+
+        async def blocked(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        with patch.object(self.paperless, "get_inbox_documents", side_effect=blocked):
+            request = asyncio.create_task(self.client.post("/review/apply-all"))
+            await entered.wait()
+            try:
+                response = await self.client.post("/settings", data={"ai_provider": "ollama"})
+                self.assertEqual(response.status_code, 409)
+            finally:
+                release.set()
+                await request
+                await self.finish_bulk_apply()
+
+    @unittest.skipUnless(find_spec("playwright"), "Install the test extra and Chromium for browser checks")
+    async def test_bulk_apply_refreshes_visible_suggestions_when_finished(self):
+        await self.cache_suggestion()
+        async with browser_page() as (page, origin):
+            page.on("dialog", lambda dialog: dialog.accept())
+            await page.goto(origin + "/review", wait_until="networkidle")
+            await page.locator('form[hx-post="/review/apply-all"] button').click()
+            await page.get_by_text("Keine Vorschläge", exact=True).wait_for(timeout=6000)
+            self.assertIsNone(self.db.get_suggestion(1))
+            self.assertEqual(len(self.db.get_history()), 1)
 
     async def test_audit_apply_uses_same_complete_metadata_as_review(self):
         await self.cache_suggestion()
@@ -361,6 +495,7 @@ class RegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(response.status_code, (200, 409))
         self.assertEqual(self.backend.docs[1], original)
         await self.client.post("/review/apply-all", data={"min_confidence": "0"})
+        await self.finish_bulk_apply()
         self.assertEqual(self.backend.docs[1], original)
 
     async def test_bulk_confidence_out_of_range_is_rejected(self):

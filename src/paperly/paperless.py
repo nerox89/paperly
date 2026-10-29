@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import httpx
 from dataclasses import dataclass, field
 from types import EllipsisType
@@ -80,6 +81,7 @@ class PaperlessClient:
         self._base = base_url.rstrip("/")
         self._headers = {"Authorization": f"Token {token}"}
         self._http: httpx.AsyncClient | None = None
+        self._update_lock = asyncio.Lock()
 
     async def open(self) -> None:
         """Create the shared HTTP client. Call once at startup."""
@@ -257,9 +259,10 @@ class PaperlessClient:
             doc = await self.get_document(doc_id)
             payload["tags"] = [t for t in doc.tags if t != remove_tag]
 
-        r = await self._c.patch(f"/api/documents/{doc_id}/", json=payload)
-        r.raise_for_status()
-        return _parse_document(r.json())
+        async with self._update_lock:
+            r = await self._c.patch(f"/api/documents/{doc_id}/", json=payload)
+            r.raise_for_status()
+            return _parse_document(r.json())
 
     async def create_correspondent(self, name: str) -> Correspondent:
         # Check for existing correspondent with same name (case-insensitive)
@@ -325,8 +328,7 @@ class PaperlessClient:
             if document_type is not None:
                 payload["document_type"] = document_type
             if payload:
-                r = await self._c.patch(f"/api/documents/{doc_id}/", json=payload)
-                r.raise_for_status()
+                await self.update_document(doc_id, **payload)
 
 
 def _parse_document(d: dict) -> Document:

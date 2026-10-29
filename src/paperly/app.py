@@ -78,6 +78,11 @@ class AppState:
         self.taxonomy_lock = asyncio.Lock()
         self.metadata_lock = asyncio.Lock()
         self.suggestion_generation = 0
+        self.review_apply_task: asyncio.Task | None = None
+        self.review_apply = {
+            "started": False, "running": False, "total": 0, "done": 0,
+            "applied": 0, "skipped": 0, "errors": 0, "failures": [], "stopped": False,
+        }
 
 
 state = AppState()
@@ -149,6 +154,9 @@ async def lifespan(app: FastAPI):
             state.batch_cancel = True
             state.batch_task.cancel()
             await asyncio.gather(state.batch_task, return_exceptions=True)
+        if state.review_apply_task and not state.review_apply_task.done():
+            state.review_apply_task.cancel()
+            await asyncio.gather(state.review_apply_task, return_exceptions=True)
         await state.paperless.close()
         state.db.close()
 
@@ -745,38 +753,82 @@ async def review_list(request: Request, min_conf: float = 0.0, max_conf: float =
             "sort": sort,
             "taxonomy": state.taxonomy,
             "auto_apply_threshold": AUTO_APPLY_MIN_CONFIDENCE,
+            "review_apply": state.review_apply,
         },
     )
 
 
 @app.post("/review/apply-all")
 async def review_apply_all(request: Request, min_confidence: Annotated[float, Form(ge=0, le=1)] = 0.85):
-    """Apply all suggestions above the confidence threshold."""
-    await _ensure_fresh_taxonomy()
-    all_docs = await _all_inbox_documents()
+    """Reserve one background application job before doing any upstream I/O."""
+    if not state.review_apply["running"]:
+        state.review_apply = {
+            "started": True, "running": True, "total": 0, "done": 0,
+            "applied": 0, "skipped": 0, "errors": 0, "failures": [], "stopped": False,
+        }
+        state.review_apply_task = asyncio.create_task(_run_review_apply(min_confidence))
+    return await review_apply_progress(request)
 
-    applied = 0
-    skipped = 0
-    errors = 0
 
-    for doc in all_docs:
-        suggestion = state.db.get_suggestion(doc.id)
-        if suggestion is None or not 0 < suggestion.confidence <= 1 or suggestion.confidence < min_confidence:
-            skipped += 1
-            continue
-
-        try:
-            await _apply_suggestion(doc, suggestion, action="auto_apply")
-            applied += 1
-        except Exception as e:
-            logger.error("Auto-apply failed for doc %d: %s", doc.id, e)
-            errors += 1
-
+@app.get("/review/apply-progress", response_class=HTMLResponse)
+async def review_apply_progress(request: Request):
+    job = state.review_apply
+    headers = {}
+    if request.method == "GET" and request.headers.get("HX-Request") and job["started"] and not job["running"]:
+        headers["HX-Refresh"] = "true"
     return templates.TemplateResponse(
-            request,
-            "partials/apply_all_results.html",
-            {"applied": applied, "skipped": skipped, "errors": errors},
+        request, "partials/apply_all_results.html", {"review_apply": job}, headers=headers,
     )
+
+
+async def _run_review_apply(min_confidence: float):
+    job = state.review_apply
+    try:
+        await _ensure_fresh_taxonomy()
+        generation = state.suggestion_generation
+        docs = await _all_inbox_documents()
+        eligible = [
+            doc.id for doc in docs
+            if (suggestion := state.db.get_suggestion(doc.id))
+            and 0 < suggestion.confidence <= 1 and suggestion.confidence >= min_confidence
+        ]
+        job["total"] = len(eligible)
+        for doc_id in eligible:
+            if generation != state.suggestion_generation:
+                job["stopped"] = True
+                break
+            try:
+                suggestion = state.db.get_suggestion(doc_id)
+                doc = await state.paperless.get_document(doc_id)
+                if (not suggestion or not min_confidence <= suggestion.confidence <= 1
+                        or not 0 < suggestion.confidence
+                        or not state.taxonomy.inbox_tag_ids.intersection(doc.tags)):
+                    job["skipped"] += 1
+                    continue
+                await _apply_suggestion(doc, suggestion, action="auto_apply")
+                job["applied"] += 1
+            except Exception as exc:
+                job["errors"] += 1
+                job["failures"].append({"doc_id": doc_id, "error": type(exc).__name__})
+                logger.exception("Auto-apply failed for doc %d (%s)", doc_id, type(exc).__name__)
+                if isinstance(exc, httpx.RequestError) or (
+                    isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
+                ):
+                    # A timed-out write may still be running in Paperless. Never replay it.
+                    job["stopped"] = True
+                    break
+            finally:
+                job["done"] += 1
+    except asyncio.CancelledError:
+        job["stopped"] = True
+        raise
+    except Exception as exc:
+        job["errors"] += 1
+        job["failures"].append({"doc_id": None, "error": type(exc).__name__})
+        job["stopped"] = True
+        logger.exception("Could not prepare bulk application (%s)", type(exc).__name__)
+    finally:
+        job["running"] = False
 
 
 # ---------------------------------------------------------------------------
@@ -924,7 +976,7 @@ async def settings_save(
     paperless_public_url: Annotated[str, Form()] = "",
 ):
     """Save settings and switch provider."""
-    if state.batch_running:
+    if state.batch_running or state.review_apply["running"]:
         raise HTTPException(409, "Wait for the running batch to finish before changing settings")
     if ai_provider not in {"claude", "ollama", "openai"}:
         raise HTTPException(422, "Unknown AI provider")
@@ -961,7 +1013,7 @@ async def settings_save(
              "error": "Einstellungen nicht gespeichert. Bitte Verbindung und Zugangsdaten prüfen."},
             status_code=400,
         )
-    if state.batch_running:
+    if state.batch_running or state.review_apply["running"]:
         if candidate:
             await candidate.close()
         raise HTTPException(409, "A batch started while settings were being validated")

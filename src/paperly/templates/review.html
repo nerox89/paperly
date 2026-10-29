@@ -59,17 +59,19 @@
   <span class="text-xs text-slate-500 font-mono">{{ items | length }} Ergebnis{{ 'se' if items | length != 1 }}</span>
 </div>
 
+{% include "partials/apply_all_results.html" %}
+
 {% if items %}
 
 <!-- Bulk apply section -->
-{% if high_conf_count > 0 %}
+{% if high_conf_count > 0 and not review_apply.running %}
 <div class="glass px-5 py-4 mb-8 flex flex-wrap items-center justify-between gap-4 animate-in border-emerald-500/20">
   <div class="text-sm text-slate-300">
     <span class="font-mono font-bold text-emerald-400">{{ high_conf_count }}</span>
     Vorschläge mit ≥&nbsp;<span class="font-mono">{{ (auto_apply_threshold * 100) | int }}%</span> Konfidenz bereit
   </div>
-  <div id="apply-all-result" class="flex items-center gap-3">
-    <form hx-post="/review/apply-all" hx-target="#apply-all-result" hx-swap="innerHTML"
+  <div class="flex items-center gap-3">
+    <form hx-post="/review/apply-all" hx-target="#apply-all-result" hx-swap="outerHTML"
           hx-confirm="Alle {{ high_conf_count }} Vorschläge mit ≥{{ (auto_apply_threshold * 100) | int }}% Konfidenz automatisch übernehmen?"
           hx-disabled-elt="find button"
           hx-indicator="find .htmx-indicator">

@@ -1,7 +1,26 @@
-<!-- Apply-all results partial -->
-<div class="glass-sm px-4 py-3 flex items-center gap-4 text-sm animate-in">
-  <span class="chip-green font-mono font-semibold">✓ {{ applied }} übernommen</span>
-  {% if skipped > 0 %}<span class="chip font-mono">{{ skipped }} übersprungen</span>{% endif %}
-  {% if errors > 0 %}<span class="chip-rose font-mono">{{ errors }} Fehler</span>{% endif %}
-  <a href="/review" class="ml-auto text-cyan-400 hover:text-cyan-300 font-medium text-xs transition-colors">↻ Aktualisieren</a>
+<div id="apply-all-result"
+     {% if review_apply.running %}
+     hx-get="/review/apply-progress" hx-trigger="every 2s" hx-swap="outerHTML"
+     {% endif %}>
+  {% if review_apply.started %}
+  <div class="glass-sm px-4 py-3 mb-6 text-sm" role="status">
+    <div class="flex flex-wrap items-center gap-4">
+      {% if review_apply.running %}
+      <span class="font-mono text-cyan-400">Übernahme läuft: {{ review_apply.done }}/{{ review_apply.total }}</span>
+      {% else %}
+      <span class="font-mono">{{ 'Übernahme gestoppt' if review_apply.stopped else 'Übernahme abgeschlossen' }}</span>
+      {% endif %}
+      <span class="chip-green font-mono font-semibold">✓ {{ review_apply.applied }} übernommen</span>
+      {% if review_apply.skipped %}<span class="chip font-mono">{{ review_apply.skipped }} übersprungen</span>{% endif %}
+      {% if review_apply.errors %}<span class="chip-rose font-mono">{{ review_apply.errors }} Fehler</span>{% endif %}
+    </div>
+    {% if review_apply.stopped %}
+    <p class="text-rose-400 mt-2">Paperless oder der Vorschlagsbestand hat sich geändert bzw. antwortet nicht.
+      Nicht übernommene Vorschläge bleiben erhalten. Es wird nicht automatisch erneut geschrieben.</p>
+    {% endif %}
+    {% for failure in review_apply.failures[:5] %}
+    <p class="text-rose-400 mt-2">{% if failure.doc_id %}Dokument #{{ failure.doc_id }}: {% endif %}{{ failure.error }}</p>
+    {% endfor %}
+  </div>
+  {% endif %}
 </div>

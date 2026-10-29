@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Run bulk suggestion application as a single background job with live progress, refreshed review results, and visible failures.
+- Serialize document updates and stop on upstream timeouts without retrying uncertain writes or discarding unapplied suggestions.
 - Use Paperless's native inbox definition, including renamed or multiple inbox tags.
 - Show retryable classification failures instead of crashing or caching failed results.
 - Validate AI output and dates before they can become actionable suggestions.
